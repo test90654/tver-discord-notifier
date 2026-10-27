@@ -1,5 +1,9 @@
 name: TVer drama ranking
 on:
+  push:
+    paths:
+      - 'notify.mjs'
+      - '.github/workflows/notify.yml'
   schedule:
     - cron: '0 12 * * *' # 21:00 Asia/Tokyo
   workflow_dispatch:
@@ -22,13 +26,10 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: '22'
-          cache: npm
-      - run: npm ci
-      - run: npx playwright install --with-deps chromium
       - name: Fetch ranking and notify
         env:
           DISCORD_WEBHOOK_URL: ${{ secrets.DISCORD_WEBHOOK_URL }}
-          DRY_RUN: ${{ github.event_name == 'workflow_dispatch' && inputs.dry_run }}
+          DRY_RUN: ${{ github.event_name == 'push' || (github.event_name == 'workflow_dispatch' && inputs.dry_run) }}
         run: |
           if [ "$DRY_RUN" = "true" ]; then
             npm run preview
