@@ -1,0 +1,1 @@
+{"name":"tver-discord-notifier","private":true,"type":"module","scripts":{"start":"node notify.mjs","preview":"node notify.mjs --dry-run"},"dependencies":{"playwright":"1.58.2"}}
