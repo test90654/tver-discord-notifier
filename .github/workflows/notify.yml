@@ -3,6 +3,8 @@ on:
   push:
     paths:
       - 'notify.mjs'
+      - 'old-dramas*.mjs'
+      - 'notification.test.mjs'
       - '.github/workflows/notify.yml'
   schedule:
     - cron: '0 12 * * *' # 21:00 Asia/Tokyo
@@ -13,7 +15,7 @@ on:
         type: boolean
         default: true
 permissions:
-  contents: read
+  contents: write
 concurrency:
   group: tver-discord
   cancel-in-progress: false
@@ -26,6 +28,7 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: '22'
+      - run: node --test old-dramas.test.mjs notification.test.mjs
       - name: Fetch ranking and notify
         env:
           DISCORD_WEBHOOK_URL: ${{ secrets.DISCORD_WEBHOOK_URL }}
@@ -35,4 +38,14 @@ jobs:
             npm run preview
           else
             npm start
+          fi
+      - name: Save successful notification history
+        if: ${{ github.event_name == 'schedule' || (github.event_name == 'workflow_dispatch' && !inputs.dry_run) }}
+        run: |
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add .state/old-dramas.json
+          if ! git diff --cached --quiet; then
+            git commit -m "Update old-drama notification history"
+            git push origin HEAD:main
           fi
