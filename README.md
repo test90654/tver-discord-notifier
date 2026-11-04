@@ -2,7 +2,7 @@
 
 ## ランキング上位の自動ダウンロード・Discordコマンド
 
-yt-dlpで毎日ドラマTOP10エピソードを保存し、Discordから `/download ranking`・`/download url`・`/status`・`/auto` で操作できます。日本国内のPCで常駐Botを動かす方法とGitHub Actionsで保存する方法に対応しています。保存先・Bot作成・設定手順は [DOWNLOAD.md](DOWNLOAD.md) を参照してください。
+yt-dlpで毎日ドラマTOP10と同じシーズンの過去話を保存し、不足する話数をDiscordに警告します。Discordから `/download ranking`・`/download url`・`/status`・`/auto` で操作できます。日本国内のPCで常駐Botを動かす方法とGitHub Actionsで保存する方法に対応しています。保存先・Bot作成・設定手順は [DOWNLOAD.md](DOWNLOAD.md) を参照してください。
 
 毎日21:00（日本時間）に、TVer公式ドラマランキングの上位10エピソードをDiscordへ投稿します。順位・番組名・エピソード名・視聴リンクを掲載します。
 
