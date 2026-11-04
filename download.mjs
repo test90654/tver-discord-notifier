@@ -3,6 +3,7 @@ import {mkdir, open, unlink, writeFile} from 'node:fs/promises';
 import {resolve, join} from 'node:path';
 import {pathToFileURL} from 'node:url';
 import {getRanking} from './ranking.mjs';
+import {planPastEpisodes, savedEpisodes, missingWarnings, warningMessages} from './past-episodes.mjs';
 
 export function episodeUrl(value) {
   const url = new URL(value);
@@ -28,15 +29,16 @@ export function runProcess(command, args, {timeout = 3600000, ...options} = {}) 
 
 export function downloadArgs(url, directory, archive) {
   return ['--ignore-config', '--no-playlist', '--no-progress', '--windows-filenames',
+    '--write-info-json',
     '--download-archive', archive, '--paths', directory,
     '--output', '%(title).150B [%(id)s].%(ext)s',
     '--format', 'bv*+ba/b', '--merge-output-format', 'mp4',
     '--retries', '3', '--fragment-retries', '3', '--socket-timeout', '30', '--', episodeUrl(url)];
 }
 
-export async function downloadEpisodes(urls, {directory = process.env.DOWNLOAD_DIR || 'downloads', stateDirectory = process.env.DOWNLOAD_STATE_DIR || '.download-state', run = runProcess, onProgress = () => {}} = {}) {
+export async function downloadEpisodes(urls, {directory = process.env.DOWNLOAD_DIR || 'downloads', stateDirectory = process.env.DOWNLOAD_STATE_DIR || '.download-state', run = runProcess, onProgress = () => {}, plan = null, scan = savedEpisodes} = {}) {
   const targets = [...new Set(urls.map(episodeUrl))];
-  if (!targets.length || targets.length > 10) throw new Error('Specify 1–10 episodes');
+  if (!targets.length || targets.length > 300) throw new Error('Specify 1–300 episodes');
   directory = resolve(directory);
   stateDirectory = resolve(stateDirectory);
   await mkdir(directory, {recursive:true});
@@ -60,7 +62,13 @@ export async function downloadEpisodes(urls, {directory = process.env.DOWNLOAD_D
         console.error(`Download failed: ${url} (see yt-dlp output)`);
       }
     }
-    await writeFile(join(stateDirectory, 'last-result.json'), JSON.stringify({at:new Date().toISOString(), results},null,2)+'\n');
+    if (plan) {
+      let saved = [];
+      try {saved = await scan(directory);}
+      catch {plan = {...plan,warnings:[...plan.warnings,'保存先を確認できません。全話そろっているか未確認です。']};}
+      results.warnings = missingWarnings(plan,saved,results);
+    }
+    await writeFile(join(stateDirectory, 'last-result.json'), JSON.stringify({at:new Date().toISOString(), results, warnings:results.warnings || []},null,2)+'\n');
     return results;
   } finally {
     await lock.close();
@@ -68,12 +76,29 @@ export async function downloadEpisodes(urls, {directory = process.env.DOWNLOAD_D
   }
 }
 
+export async function downloadCollection(urls, {planner = planPastEpisodes, ...options} = {}) {
+  const plan = await planner([...new Set(urls.map(episodeUrl))]);
+  return downloadEpisodes(plan.urls,{...options,plan});
+}
+
+export async function postDownloadReport(results, webhook, fetchImpl = fetch) {
+  if (!/^https:\/\/discord\.com\/api\/webhooks\/\d+\/[\w-]+$/.test(webhook || '')) throw new Error('Set valid DISCORD_WEBHOOK_URL for --discord-report');
+  const ok = results.filter(x=>x.ok).length;
+  for (const content of [`動画保存の処理結果：成功または保存履歴あり ${ok}/${results.length}件`,...warningMessages(results.warnings || [])]) {
+    const response = await fetchImpl(`${webhook}?wait=true`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({content,allowed_mentions:{parse:[]}}),signal:AbortSignal.timeout(30000)});
+    if (!response.ok) throw new Error(`Discord download report HTTP ${response.status}`);
+  }
+}
+
 if (process.argv[1] && import.meta.url === pathToFileURL(resolve(process.argv[1])).href) {
   try {
-    const args = process.argv.slice(2);
+    const report = process.argv.includes('--discord-report');
+    const args = process.argv.slice(2).filter(x=>x!=='--discord-report');
     const urls = args.length === 1 && args[0] === '--ranking' ? await getRanking() : args;
-    const results = await downloadEpisodes(urls);
+    const results = await downloadCollection(urls);
     console.log(`Completed or already saved: ${results.filter(x=>x.ok).length}/${results.length}`);
+    for (const warning of results.warnings) console.warn(`WARNING: ${warning}`);
+    if (report) await postDownloadReport(results,process.env.DISCORD_WEBHOOK_URL);
     if (results.some(x=>!x.ok)) process.exitCode = 1;
   } catch (error) {console.error(error.message); process.exitCode = 1;}
 }

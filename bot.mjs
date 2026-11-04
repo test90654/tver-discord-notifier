@@ -1,6 +1,7 @@
 import {Client, Events, GatewayIntentBits, MessageFlags, REST, Routes, SlashCommandBuilder} from 'discord.js';
 import {DownloadController, authorized} from './bot-control.mjs';
 import {episodeUrl} from './download.mjs';
+import {warningMessages} from './past-episodes.mjs';
 
 const token = process.env.DISCORD_BOT_TOKEN;
 const guildId = process.env.DISCORD_GUILD_ID;
@@ -13,8 +14,8 @@ const controller = new DownloadController();
 await controller.init();
 const commands = [
   new SlashCommandBuilder().setName('download').setDescription('TVerをホストに保存する')
-    .addSubcommand(x=>x.setName('ranking').setDescription('最新のドラマランキングTOP10を保存'))
-    .addSubcommand(x=>x.setName('url').setDescription('指定エピソードを保存').addStringOption(o=>o.setName('url').setDescription('https://tver.jp/episodes/ep...').setRequired(true))),
+    .addSubcommand(x=>x.setName('ranking').setDescription('最新ドラマTOP10と同じシーズンの過去話を保存'))
+    .addSubcommand(x=>x.setName('url').setDescription('指定した話と同じシーズンの過去話を保存').addStringOption(o=>o.setName('url').setDescription('https://tver.jp/episodes/ep...').setRequired(true))),
   new SlashCommandBuilder().setName('status').setDescription('ダウンロードの進行と自動保存設定を確認'),
   new SlashCommandBuilder().setName('auto').setDescription('このBotの毎日21:10の自動保存を切り替える')
     .addBooleanOption(x=>x.setName('enabled').setDescription('ONなら自動保存').setRequired(true))
@@ -26,10 +27,15 @@ async function report(content) {
   try {await channel.send({content,allowedMentions:{parse:[]}});}
   catch {console.error('Could not send download result to Discord.');}
 }
+async function completion(content) {
+  const warnings = [...controller.warnings];
+  await report(content);
+  for (const message of warningMessages(warnings)) await report(message);
+}
 async function tick() {
   try {
     const result = await controller.tick();
-    if (result) await report(`自動ダウンロード：${result}`);
+    if (result) await completion(`自動ダウンロード：${result}`);
   } catch {console.error('Automatic download failed; inspect downloader output.'); await report('自動ダウンロードに失敗しました。ホストのログを確認してください。');}
 }
 client.once(Events.ClientReady, async ready => {
@@ -66,7 +72,7 @@ client.on(Events.InteractionCreate, async interaction => {
       await interaction.deferReply({flags:MessageFlags.Ephemeral});
       // Completion is posted to the configured channel, so jobs may exceed Discord's interaction lifetime.
       const task = controller.start(url);
-      void task.then(result=>report(`<@${interaction.user.id}> ${result}`),async()=>{
+      void task.then(result=>completion(`<@${interaction.user.id}> ${result}`),async()=>{
         console.error('Manual download failed; inspect downloader output.');
         await report('手動ダウンロードに失敗しました。ホストのログを確認してください。');
       });

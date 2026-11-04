@@ -35,7 +35,9 @@ jobs:
           key: tver-download-${{ runner.os }}-${{ github.run_id }}-${{ github.run_attempt }}
           restore-keys: tver-download-${{ runner.os }}-
       - name: Download top 10
-        run: node download.mjs --ranking
+        env:
+          DISCORD_WEBHOOK_URL: ${{ secrets.DISCORD_WEBHOOK_URL }}
+        run: node download.mjs --ranking --discord-report
       - name: Upload videos and result
         id: upload
         if: ${{ always() }}
