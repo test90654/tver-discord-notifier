@@ -1,0 +1,56 @@
+name: TVer download ranking
+on:
+  schedule:
+    - cron: '10 12 * * *' # 21:10 Asia/Tokyo
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: tver-download
+  cancel-in-progress: false
+jobs:
+  download:
+    if: ${{ github.event_name == 'workflow_dispatch' || vars.DOWNLOAD_ENABLED == 'true' }}
+    runs-on: ${{ vars.TVER_DOWNLOAD_RUNNER || 'ubuntu-latest' }}
+    timeout-minutes: 180
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - uses: actions/setup-python@v5
+        if: ${{ runner.environment == 'github-hosted' }}
+        with:
+          python-version: '3.12'
+      - name: Install downloader on hosted runner
+        if: ${{ runner.environment == 'github-hosted' }}
+        run: |
+          python -m pip install --upgrade yt-dlp
+          sudo apt-get update
+          sudo apt-get install -y ffmpeg
+      - name: Restore completed-download history
+        uses: actions/cache/restore@v4
+        with:
+          path: .download-state/archive.txt
+          key: tver-download-${{ runner.os }}-${{ github.run_id }}-${{ github.run_attempt }}
+          restore-keys: tver-download-${{ runner.os }}-
+      - name: Download top 10
+        run: node download.mjs --ranking
+      - name: Upload videos and result
+        id: upload
+        if: ${{ always() }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: tver-${{ github.run_id }}-${{ github.run_attempt }}
+          path: |
+            downloads/
+            .download-state/last-result.json
+          retention-days: 7
+          compression-level: 0
+          if-no-files-found: warn
+      - name: Remember downloads only after upload succeeds
+        if: ${{ always() && steps.upload.outcome == 'success' }}
+        uses: actions/cache/save@v4
+        with:
+          path: .download-state/archive.txt
+          key: tver-download-${{ runner.os }}-${{ github.run_id }}-${{ github.run_attempt }}

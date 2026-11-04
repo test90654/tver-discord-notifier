@@ -4,9 +4,15 @@
   "type": "module",
   "scripts": {
     "start": "node notify.mjs",
-    "preview": "node notify.mjs --dry-run"
+    "preview": "node notify.mjs --dry-run",
+    "download": "node --env-file-if-exists=.env download.mjs",
+    "bot": "node --env-file-if-exists=.env bot.mjs",
+    "test": "node --test"
   },
   "engines": {
-    "node": ">=22"
+    "node": ">=22.12.0"
+  },
+  "dependencies": {
+    "discord.js": "^14.28.0"
   }
 }

@@ -1,5 +1,9 @@
 # TVer → Discord
 
+## ランキング上位の自動ダウンロード・Discordコマンド
+
+yt-dlpで毎日ドラマTOP10エピソードを保存し、Discordから `/download ranking`・`/download url`・`/status`・`/auto` で操作できます。日本国内のPCで常駐Botを動かす方法とGitHub Actionsで保存する方法に対応しています。保存先・Bot作成・設定手順は [DOWNLOAD.md](DOWNLOAD.md) を参照してください。
+
 毎日21:00（日本時間）に、TVer公式ドラマランキングの上位10エピソードをDiscordへ投稿します。順位・番組名・エピソード名・視聴リンクを掲載します。
 
 ## 旧作ドラマの配信開始通知
@@ -23,7 +27,7 @@
 
 スケジュールはデフォルトブランチ上で動きます。GitHub Actionsは混雑時に遅延・実行漏れが生じる可能性があります。公開リポジトリでは60日間リポジトリの活動がないと定期実行が無効になるため、無効化された場合はActions画面から再有効化してください。
 
-[TVerRec](https://github.com/dongaba/TVerRec) の匿名トークン取得・ランキングAPI呼び出しを参考に、Node.jsからAPIへ直接アクセスします。TVerRec本体のインストールや動画ダウンロードは行いません。出典とMITライセンスは THIRD_PARTY_NOTICES.md に記載しています。順位はAPIの rank を使用します。公式に保証された外部向けAPIではないため、サイト変更やGitHub実行環境からのアクセス制限により停止する場合があります。取得できない、または上位10件を検証できない場合は投稿せず、Actionsを失敗にします。失敗はActions画面で確認してください。
+[TVerRec](https://github.com/dongaba/TVerRec) の匿名トークン取得・ランキングAPI呼び出しを参考に、Node.jsからAPIへ直接アクセスします。通知処理ではTVerRec本体をインストールせず、動画保存には別途yt-dlpを使用します。出典とMITライセンスは THIRD_PARTY_NOTICES.md に記載しています。順位はAPIの rank を使用します。公式に保証された外部向けAPIではないため、サイト変更やGitHub実行環境からのアクセス制限により停止する場合があります。取得できない、または上位10件を検証できない場合は投稿せず、Actionsを失敗にします。失敗はActions画面で確認してください。
 
 ## ローカルプレビュー
 
