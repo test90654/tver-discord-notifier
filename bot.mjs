@@ -21,6 +21,11 @@ const commands = [
     .addSubcommand(x=>x.setName('ranking').setDescription('最新ドラマTOP10と同じシーズンの過去話を保存'))
     .addSubcommand(x=>x.setName('url').setDescription('指定した話と同じシーズンの過去話を保存').addStringOption(o=>o.setName('url').setDescription('https://tver.jp/episodes/ep...').setRequired(true))),
   new SlashCommandBuilder().setName('status').setDescription('ダウンロードの進行と自動保存設定を確認'),
+  new SlashCommandBuilder().setName('uploaded').setDescription('YouTubeへ保存済みの話を登録しPCから削除後の再取得を止める')
+    .addStringOption(x=>x.setName('episode').setDescription('元のTVerエピソードURL').setRequired(true))
+    .addStringOption(x=>x.setName('youtube').setDescription('保存先のYouTube動画URL').setRequired(true)),
+  new SlashCommandBuilder().setName('unuploaded').setDescription('YouTube保存済み登録を解除して再取得の対象に戻す')
+    .addStringOption(x=>x.setName('episode').setDescription('元のTVerエピソードURL').setRequired(true)),
   new SlashCommandBuilder().setName('auto').setDescription('このBotの毎日21:10の自動保存を切り替える')
     .addBooleanOption(x=>x.setName('enabled').setDescription('ONなら自動保存').setRequired(true))
 ].map(x=>x.toJSON());

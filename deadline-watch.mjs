@@ -2,6 +2,7 @@ import {mkdir,readFile,writeFile,rename,readdir,access} from 'node:fs/promises';
 import {join} from 'node:path';
 import {createCatalog,savedEpisodes,episodeNumber} from './past-episodes.mjs';
 import {getRanking} from './ranking.mjs';
+import {readExternalCopies} from './external-copies.mjs';
 
 const valid=(id,prefix)=>typeof id==='string' && new RegExp(`^${prefix}[a-z0-9]+$`).test(id);
 const label=episode=>`${episode.title} 第${episode.number || '?'}話`;
@@ -65,6 +66,7 @@ export class DeadlineWatcher {
         this.add({id,seriesId:item.series_id,seasonId:item.season_id,title:item.series || item.title,number:episodeNumber(item.episode_number)});
       }catch{}
     }
+    for(const item of await readExternalCopies(this.stateDirectory))this.add(item);
     await this.save();
   }
   async alert(key,message,ttl=86400){
@@ -82,7 +84,7 @@ export class DeadlineWatcher {
     this.busy=true;this.lastTick=now;
     try{
       this.lastSummary='配信一覧と期限を確認中';
-      const saved=await this.scan(this.directory,{includeIds:true});
+      const saved=[...await this.scan(this.directory,{includeIds:true}),...await readExternalCopies(this.stateDirectory)];
       const catalog=this.catalogFactory();
       // Keep watching a work after it drops out of the ranking, and discover newly ranked works.
       try{for(const target of await this.ranking())this.add(await catalog.episode(new URL(target).pathname.split('/').at(-1)));}
@@ -152,7 +154,7 @@ export class DeadlineWatcher {
       const plan={urls:selected.map(url),groups,warnings:[]};
       await this.controller.start(null,{plan,monitor:true});
       const results=this.controller.lastResults || [];
-      const confirmed=await this.scan(this.directory,{includeIds:true});
+      const confirmed=[...await this.scan(this.directory,{includeIds:true}),...await readExternalCopies(this.stateDirectory)];
       let successful=0;
       for(const item of selected){
         const result=results.find(x=>x.url===url(item));

@@ -1,5 +1,6 @@
 import {authorized} from './bot-control.mjs';
 import {episodeUrl} from './download.mjs';
+import {resolveUploadEpisode,setExternalCopy,youtubeVideoUrl} from './external-copies.mjs';
 
 const ephemeral = 64;
 export function statusPanel(controller, notice = '') {
@@ -58,6 +59,14 @@ export function createInteractionHandler({controller,guildId,userIds,completion,
         await controller.setAutomatic(interaction.options.getBoolean('enabled',true));
         await onStateChange();
         await respond();
+      } else if (['uploaded','unuploaded'].includes(interaction.commandName)) {
+        await interaction.deferReply({flags:ephemeral});
+        const remove=interaction.commandName==='unuploaded';
+        const youtubeUrl=remove?null:youtubeVideoUrl(interaction.options.getString('youtube',true));
+        const episode=await resolveUploadEpisode(interaction.options.getString('episode',true),{stateDirectory:controller.stateDirectory});
+        await setExternalCopy({episode,youtubeUrl,declaredBy:interaction.user.id,remove},controller.stateDirectory);
+        await interaction.editReply({content:remove?`${episode.title} 第${episode.number}話のYouTube保存済み登録を解除しました。未保存なら再取得の対象になります。`:`${episode.title} 第${episode.number}話を「YouTubeへ保存済み」と登録しました。PCから動画を削除しても、この話は再ダウンロードしません。\nYouTubeでの保存は利用者の申告として記録しました。再生確認後に元動画を削除してください。`,allowedMentions:{parse:[]}});
+        await onStateChange();
       } else if (interaction.commandName === 'download') {
         const url = interaction.options.getSubcommand() === 'url' ? episodeUrl(interaction.options.getString('url',true)) : null;
         await interaction.deferReply({flags:ephemeral});
