@@ -27,7 +27,7 @@ test('/status presents actions without starting downloads',async()=>{
   assert.equal(starts.length,0);
   const payload=event.calls[0].body;
   assert.equal(payload.flags,undefined);
-  assert.deepEqual(payload.components.flatMap(x=>x.components.map(b=>b.custom_id)),['tver:download-now','tver:refresh','tver:auto:on','tver:auto:off']);
+  assert.deepEqual(payload.components.flatMap(x=>x.components.map(b=>b.custom_id)),['tver:download-now','tver:refresh','tver:auto:on','tver:auto:off','tver:uploads:open']);
   assert.equal(payload.components[1].components[0].disabled,true);
   controller.active=true;
   assert.equal(statusPanel(controller).components[0].components[0].disabled,true);

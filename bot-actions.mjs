@@ -1,6 +1,7 @@
 import {authorized} from './bot-control.mjs';
 import {episodeUrl} from './download.mjs';
 import {resolveUploadEpisode,setExternalCopy,youtubeVideoUrl} from './external-copies.mjs';
+import {UploadPicker} from './upload-picker.mjs';
 
 const ephemeral = 64;
 export function statusPanel(controller, notice = '') {
@@ -13,19 +14,21 @@ export function statusPanel(controller, notice = '') {
     ]},{type:1,components:[
       {type:2,custom_id:'tver:auto:on',label:'毎日の自動保存をON',style:3,disabled:controller.schedule.enabled},
       {type:2,custom_id:'tver:auto:off',label:'毎日の自動保存をOFF',style:2,disabled:!controller.schedule.enabled}
-    ]}]
+    ]},{type:1,components:[{type:2,custom_id:'tver:uploads:open',label:'YouTube保存済みにする',style:2}]}]
   };
 }
 
-export function createInteractionHandler({controller,guildId,userIds,completion,report,onStateChange=async()=>{}}) {
+export function createInteractionHandler({controller,guildId,userIds,completion,report,onStateChange=async()=>{},uploadPicker=new UploadPicker({stateDirectory:controller.stateDirectory})}) {
   return async interaction => {
     const button = interaction.isButton();
-    if (!interaction.isChatInputCommand() && !(button && interaction.customId.startsWith('tver:'))) return;
+    const select=interaction.isStringSelectMenu?.()===true;
+    if (!interaction.isChatInputCommand() && !((button || select) && interaction.customId.startsWith('tver:'))) return;
     try {
       if (!authorized(interaction,guildId,userIds)) {
         await interaction.reply({content:'このBotを操作する権限がありません。',flags:ephemeral});
         return;
       }
+      if((button || select) && interaction.customId.startsWith('tver:uploads:')){await uploadPicker.handle(interaction);return;}
       const respond = async notice => interaction.editReply(statusPanel(controller,notice));
       const begin = async url => {
         // Recheck after acknowledgement: another click or the daily timer may have started a job.
@@ -60,9 +63,13 @@ export function createInteractionHandler({controller,guildId,userIds,completion,
         await onStateChange();
         await respond();
       } else if (['uploaded','unuploaded'].includes(interaction.commandName)) {
+        if(interaction.commandName==='uploaded' && !interaction.options.getString('episode')){
+          await uploadPicker.open(interaction,{youtubeUrl:interaction.options.getString('youtube')});return;
+        }
         await interaction.deferReply({flags:ephemeral});
         const remove=interaction.commandName==='unuploaded';
-        const youtubeUrl=remove?null:youtubeVideoUrl(interaction.options.getString('youtube',true));
+        const suppliedYoutube=interaction.options.getString('youtube');
+        const youtubeUrl=remove || !suppliedYoutube?null:youtubeVideoUrl(suppliedYoutube);
         const episode=await resolveUploadEpisode(interaction.options.getString('episode',true),{stateDirectory:controller.stateDirectory});
         await setExternalCopy({episode,youtubeUrl,declaredBy:interaction.user.id,remove},controller.stateDirectory);
         await interaction.editReply({content:remove?`${episode.title} 第${episode.number}話のYouTube保存済み登録を解除しました。未保存なら再取得の対象になります。`:`${episode.title} 第${episode.number}話を「YouTubeへ保存済み」と登録しました。PCから動画を削除しても、この話は再ダウンロードしません。\nYouTubeでの保存は利用者の申告として記録しました。再生確認後に元動画を削除してください。`,allowedMentions:{parse:[]}});
