@@ -6,6 +6,7 @@ import {getRanking} from './ranking.mjs';
 import {planPastEpisodes, savedEpisodes, missingWarnings, warningMessages} from './past-episodes.mjs';
 import {classifyDownloadError, downloadErrorMessage, permissionErrors} from './download-errors.mjs';
 import {parseProgress, localDuration} from './progress.mjs';
+import {readExternalCopies,matchesExternalCopy,sourceEpisodeId} from './external-copies.mjs';
 
 export function episodeUrl(value) {
   const url = new URL(value);
@@ -81,6 +82,11 @@ export async function downloadEpisodes(urls, {directory = process.env.DOWNLOAD_D
   try {
     for (const [index, url] of targets.entries()) {
       const episode=plan?.groups.flatMap(group=>group.episodes).find(x=>`https://tver.jp/episodes/${x.id}`===url);
+      const external=await readExternalCopies(stateDirectory);
+      if(matchesExternalCopy(external,{id:sourceEpisodeId(url),...episode})){
+        results.push({url,ok:true,external:true});
+        continue;
+      }
       const event={index:index+1,total:targets.length,url,title:episode?.title,number:episode?.number,completed:results.length,ok:results.filter(x=>x.ok).length,failed:results.filter(x=>!x.ok).length};
       let duration;
       onProgress({...event,stage:'prepare'});
@@ -113,7 +119,7 @@ export async function downloadEpisodes(urls, {directory = process.env.DOWNLOAD_D
     if (plan) {
       onProgress({stage:'verify'});
       let saved = [];
-      try {saved = await scan(directory);}
+      try {saved = [...await scan(directory),...await readExternalCopies(stateDirectory)];}
       catch {plan = {...plan,warnings:[...plan.warnings,'保存先を確認できません。全話そろっているか未確認です。']};}
       results.warnings = missingWarnings(plan,saved,results);
     }
