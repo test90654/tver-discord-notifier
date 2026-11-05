@@ -2,6 +2,7 @@ import {mkdir, readFile, writeFile, rename} from 'node:fs/promises';
 import {join} from 'node:path';
 import {getRanking} from './ranking.mjs';
 import {downloadCollection, episodeUrl} from './download.mjs';
+import {formatProgress} from './progress.mjs';
 
 export function authorized(interaction, guildId, userIds) {
   return interaction.guildId === guildId && userIds.has(interaction.user.id);
@@ -51,10 +52,11 @@ export class DownloadController {
         await this.saveSchedule();
       }
       const urls = url ? [url] : await this.ranking();
-      const results = await this.download(urls, {stateDirectory:this.stateDirectory, onProgress:({index,total})=>{this.progress=`ダウンロード処理中：${index}/${total}`;}});
+      const results = await this.download(urls, {stateDirectory:this.stateDirectory, onProgress:event=>{this.progress=formatProgress(event);}});
       const ok = results.filter(x=>x.ok).length;
+      const skipped = results.filter(x=>x.skipped).length;
       this.warnings = results.warnings || [];
-      this.progress = `完了：保存成功または保存済み ${ok}/${results.length}件、失敗 ${results.length-ok}件`;
+      this.progress = `完了：保存成功または保存済み ${ok}/${results.length}件、失敗 ${results.length-ok-skipped}件、未試行 ${skipped}件`;
       if (this.warnings.length) this.progress += `\n⚠ 不足・確認不能などの警告 ${this.warnings.length}件（詳細は通知チャンネル）`;
       return this.progress;
     } catch(error) {

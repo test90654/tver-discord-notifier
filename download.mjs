@@ -4,6 +4,8 @@ import {resolve, join} from 'node:path';
 import {pathToFileURL} from 'node:url';
 import {getRanking} from './ranking.mjs';
 import {planPastEpisodes, savedEpisodes, missingWarnings, warningMessages} from './past-episodes.mjs';
+import {classifyDownloadError, downloadErrorMessage, permissionErrors} from './download-errors.mjs';
+import {parseProgress, localDuration} from './progress.mjs';
 
 export function episodeUrl(value) {
   const url = new URL(value);
@@ -13,22 +15,44 @@ export function episodeUrl(value) {
   return `https://tver.jp${url.pathname.replace(/\/$/, '')}`;
 }
 
-export function runProcess(command, args, {timeout = 3600000, ...options} = {}) {
+export function runProcess(command, args, {timeout = 3600000, onLine = () => {}, ...options} = {}) {
   return new Promise((resolvePromise, reject) => {
-    const child = spawn(command, args, {stdio:'inherit', shell:false, ...options});
+    const child = spawn(command, args, {stdio:['ignore','pipe','pipe'], shell:false, ...options});
+    const buffers={stdout:'',stderr:''};
+    function lines(name,chunk){
+      buffers[name]+=chunk;
+      const parts=buffers[name].split(/[\r\n]+/);
+      buffers[name]=parts.pop().slice(-32768);
+      for(const line of parts)onLine(line);
+    }
+    child.stdout?.setEncoding('utf8');
+    child.stdout?.on('data',chunk=>{process.stdout.write(chunk);lines('stdout',chunk);});
+    let stderrTail = '';
+    child.stderr?.setEncoding('utf8');
+    child.stderr?.on('data', chunk => {
+      stderrTail = (stderrTail+chunk).slice(-32768);
+      process.stderr.write(chunk);
+      lines('stderr',chunk);
+    });
     let expired = false;
     const timer = setTimeout(() => {expired = true; child.kill('SIGTERM');}, timeout);
     child.once('error', error => {clearTimeout(timer); reject(error);});
     child.once('close', code => {
+      for(const line of Object.values(buffers))if(line)onLine(line);
       clearTimeout(timer);
-      if (expired || code !== 0) reject(new Error(expired ? 'Download timed out' : `Downloader exited with ${code}`));
-      else resolvePromise();
+      if (expired || code !== 0) {
+        const error = new Error(expired ? 'Download timed out' : `Downloader exited with ${code}`);
+        error.stderrTail = stderrTail;
+        if (expired) error.code = 'DOWNLOAD_TIMEOUT';
+        reject(error);
+      } else resolvePromise();
     });
   });
 }
 
 export function downloadArgs(url, directory, archive) {
-  return ['--ignore-config', '--no-playlist', '--no-progress', '--windows-filenames',
+  return ['--ignore-config', '--no-playlist', '--progress', '--newline', '--progress-delta', '2', '--color', 'never', '--encoding', 'utf-8', '--windows-filenames',
+    '--progress-template','download:TV_PROGRESS|%(progress.status)s|%(progress._percent_str)s|%(progress._speed_str)s|%(progress._eta_str)s',
     '--write-info-json',
     '--download-archive', archive, '--paths', directory,
     '--output', '%(title).150B [%(id)s].%(ext)s',
@@ -51,23 +75,48 @@ export async function downloadEpisodes(urls, {directory = process.env.DOWNLOAD_D
     throw error;
   }
   const results = [];
+  const diagnostics = new Set();
+  let consecutiveDenials = 0;
+  let lastDenial;
   try {
     for (const [index, url] of targets.entries()) {
-      onProgress({index:index+1, total:targets.length, url});
+      const episode=plan?.groups.flatMap(group=>group.episodes).find(x=>`https://tver.jp/episodes/${x.id}`===url);
+      const event={index:index+1,total:targets.length,url,title:episode?.title,number:episode?.number,completed:results.length,ok:results.filter(x=>x.ok).length,failed:results.filter(x=>!x.ok).length};
+      let duration;
+      onProgress({...event,stage:'prepare'});
       try {
-        await run(process.env.YTDLP_BIN || 'yt-dlp', downloadArgs(url, directory, join(stateDirectory, 'archive.txt')));
+        await run(process.env.YTDLP_BIN || 'yt-dlp', downloadArgs(url, directory, join(stateDirectory, 'archive.txt')), {onLine:line=>{
+          if(duration===undefined && /\btime=\d+:/.test(line))duration=localDuration(directory,url);
+          const progress=parseProgress(line,duration);
+          if(progress)onProgress({...event,...progress});
+        }});
         results.push({url, ok:true});
-      } catch {
-        results.push({url, ok:false});
+        consecutiveDenials = 0;
+        lastDenial = null;
+      } catch (error) {
+        const reason = classifyDownloadError(error);
+        results.push({url, ok:false, reason});
+        if (reason !== 'downloader_failed') diagnostics.add(downloadErrorMessage(reason));
+        consecutiveDenials = permissionErrors.has(reason) ? (lastDenial === reason ? consecutiveDenials+1 : 1) : 0;
+        lastDenial = reason;
         console.error(`Download failed: ${url} (see yt-dlp output)`);
+        if (consecutiveDenials >= 3 || reason === 'not_installed') {
+          const remaining = targets.slice(index+1);
+          for (const pending of remaining) results.push({url:pending,ok:false,skipped:true,reason});
+          if (remaining.length) diagnostics.add(`同じ再生許可エラーが3件連続、またはyt-dlpを起動できないため、残り${remaining.length}件は未試行で停止しました。配信終了や話数不足が原因とは限りません。`);
+          break;
+        }
       }
+      onProgress({...event,stage:'episodeDone',completed:results.filter(x=>!x.skipped).length,ok:results.filter(x=>x.ok).length,failed:results.filter(x=>!x.ok && !x.skipped).length});
     }
     if (plan) {
+      onProgress({stage:'verify'});
       let saved = [];
       try {saved = await scan(directory);}
       catch {plan = {...plan,warnings:[...plan.warnings,'保存先を確認できません。全話そろっているか未確認です。']};}
       results.warnings = missingWarnings(plan,saved,results);
     }
+    if (diagnostics.size) results.warnings = [...diagnostics,...(results.warnings || [])];
     await writeFile(join(stateDirectory, 'last-result.json'), JSON.stringify({at:new Date().toISOString(), results, warnings:results.warnings || []},null,2)+'\n');
     return results;
   } finally {
@@ -77,14 +126,16 @@ export async function downloadEpisodes(urls, {directory = process.env.DOWNLOAD_D
 }
 
 export async function downloadCollection(urls, {planner = planPastEpisodes, ...options} = {}) {
-  const plan = await planner([...new Set(urls.map(episodeUrl))]);
+  options.onProgress?.({stage:'catalog'});
+  const plan = await planner([...new Set(urls.map(episodeUrl))],{onProgress:options.onProgress});
   return downloadEpisodes(plan.urls,{...options,plan});
 }
 
 export async function postDownloadReport(results, webhook, fetchImpl = fetch) {
   if (!/^https:\/\/discord\.com\/api\/webhooks\/\d+\/[\w-]+$/.test(webhook || '')) throw new Error('Set valid DISCORD_WEBHOOK_URL for --discord-report');
   const ok = results.filter(x=>x.ok).length;
-  for (const content of [`動画保存の処理結果：成功または保存履歴あり ${ok}/${results.length}件`,...warningMessages(results.warnings || [])]) {
+  const skipped = results.filter(x=>x.skipped).length;
+  for (const content of [`動画保存の処理結果：成功または保存履歴あり ${ok}/${results.length}件、失敗 ${results.length-ok-skipped}件、未試行 ${skipped}件`,...warningMessages(results.warnings || [])]) {
     const response = await fetchImpl(`${webhook}?wait=true`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({content,allowed_mentions:{parse:[]}}),signal:AbortSignal.timeout(30000)});
     if (!response.ok) throw new Error(`Discord download report HTTP ${response.status}`);
   }

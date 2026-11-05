@@ -83,8 +83,8 @@ export async function savedEpisodes(directory) {
   return saved;
 }
 
-export async function planPastEpisodes(urls, {catalog=createCatalog(), maxPerSeason=200, maxTotal=300} = {}) {
-  const targets = new Set(urls);
+export async function planPastEpisodes(urls, {catalog=createCatalog(), maxPerSeason=200, maxTotal=300, onProgress=()=>{}} = {}) {
+  const targets = new Set();
   const groups = new Map();
   const warnings = [];
   for (const url of urls) {
@@ -97,12 +97,15 @@ export async function planPastEpisodes(urls, {catalog=createCatalog(), maxPerSea
       const key = `${episode.seriesId}/${episode.seasonId}`;
       const group = groups.get(key) || {seriesId:episode.seriesId,seasonId:episode.seasonId,title:episode.title,through:0,episodes:[]};
       group.through = Math.max(group.through,episode.number);
+      group.episodes.push(episode);
       groups.set(key,group);
     } catch {
       warnings.push(`作品情報を取得できません。過去話の不足は未確認です。 ${url}`);
     }
   }
+  let groupIndex=0;
   for (const group of groups.values()) {
+    onProgress({stage:'catalog',title:group.title,groupIndex:++groupIndex,groupTotal:groups.size});
     try {
       const ids = await catalog.season(group.seasonId);
       if (ids.length > maxPerSeason) warnings.push(`一覧上限：${group.title}。${maxPerSeason}件を超えるため過去話の確認が一部できません。`);
@@ -119,11 +122,14 @@ export async function planPastEpisodes(urls, {catalog=createCatalog(), maxPerSea
           }
         } catch {warnings.push(`話数を確認できません：${group.title} https://tver.jp/episodes/${id}`);}
       }
-      for (const item of group.episodes.sort((a,b)=>a.number-b.number)) {
-        if (item.available) targets.add(`https://tver.jp/episodes/${item.id}`);
-      }
     } catch {warnings.push(`過去話一覧を取得できません：${group.title}。全話そろっているか未確認です。`);}
+    group.episodes=[...new Map(group.episodes.map(item=>[item.id,item])).values()].sort((a,b)=>a.number-b.number);
+    for(const item of group.episodes){
+      const url=`https://tver.jp/episodes/${item.id}`;
+      if(item.available || urls.includes(url))targets.add(url);
+    }
   }
+  for(const url of urls)targets.add(url);
   if (targets.size > maxTotal) warnings.push(`保存上限：対象${targets.size}件のうち${maxTotal}件まで処理します。残りは未保存です。`);
   return {urls:[...targets].slice(0,maxTotal),groups:[...groups.values()],warnings:[...new Set(warnings)]};
 }
@@ -140,8 +146,10 @@ export function missingWarnings(plan, saved, results) {
       warnings.push(`不足：${group.title}［${group.seasonId}］第1〜${group.through}話のうち ${label} の保存を確認できません。${unavailable.length?'配信一覧にない／配信終了／一覧取得失敗の話を含みます。':''}`);
     }
   }
-  const failed = results.filter(x=>!x.ok);
+  const failed = results.filter(x=>!x.ok && !x.skipped);
   if (failed.length) warnings.push(`ダウンロード失敗：${failed.length}件。対象URLは実行結果JSONを確認してください。`);
+  const skipped = results.filter(x=>x.skipped);
+  if (skipped.length) warnings.push(`未試行：${skipped.length}件。再生許可エラーの連続などで停止したため保存していません。`);
   return [...new Set(warnings)];
 }
 
