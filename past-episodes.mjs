@@ -140,8 +140,10 @@ export function missingWarnings(plan, saved, results) {
       warnings.push(`不足：${group.title}［${group.seasonId}］第1〜${group.through}話のうち ${label} の保存を確認できません。${unavailable.length?'配信一覧にない／配信終了／一覧取得失敗の話を含みます。':''}`);
     }
   }
-  const failed = results.filter(x=>!x.ok);
+  const failed = results.filter(x=>!x.ok && !x.skipped);
   if (failed.length) warnings.push(`ダウンロード失敗：${failed.length}件。対象URLは実行結果JSONを確認してください。`);
+  const skipped = results.filter(x=>x.skipped);
+  if (skipped.length) warnings.push(`未試行：${skipped.length}件。再生許可エラーの連続などで停止したため保存していません。`);
   return [...new Set(warnings)];
 }
 
