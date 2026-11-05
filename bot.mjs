@@ -1,6 +1,6 @@
-import {Client, Events, GatewayIntentBits, MessageFlags, REST, Routes, SlashCommandBuilder} from 'discord.js';
-import {DownloadController, authorized} from './bot-control.mjs';
-import {episodeUrl} from './download.mjs';
+import {Client, Events, GatewayIntentBits, REST, Routes, SlashCommandBuilder} from 'discord.js';
+import {DownloadController} from './bot-control.mjs';
+import {createInteractionHandler} from './bot-actions.mjs';
 import {warningMessages} from './past-episodes.mjs';
 
 const token = process.env.DISCORD_BOT_TOKEN;
@@ -50,42 +50,7 @@ client.once(Events.ClientReady, async ready => {
     await tick();
   } catch {console.error('Bot setup failed: check token, guild/channel IDs and bot permissions.'); await client.destroy(); process.exitCode=1;}
 });
-client.on(Events.InteractionCreate, async interaction => {
-  if (!interaction.isChatInputCommand()) return;
-  try {
-    if (!authorized(interaction,guildId,userIds)) {
-      await interaction.reply({content:'このBotを操作する権限がありません。',flags:MessageFlags.Ephemeral});
-      return;
-    }
-    if (interaction.commandName === 'status') {
-      await interaction.reply({content:controller.status(),flags:MessageFlags.Ephemeral});
-    } else if (interaction.commandName === 'auto') {
-      await interaction.deferReply({flags:MessageFlags.Ephemeral});
-      await controller.setAutomatic(interaction.options.getBoolean('enabled',true));
-      await interaction.editReply(controller.status());
-    } else if (interaction.commandName === 'download') {
-      if (controller.active) {
-        await interaction.reply({content:'実行中です。/status で確認してください。',flags:MessageFlags.Ephemeral});
-        return;
-      }
-      const url = interaction.options.getSubcommand() === 'url' ? episodeUrl(interaction.options.getString('url',true)) : null;
-      await interaction.deferReply({flags:MessageFlags.Ephemeral});
-      // Completion is posted to the configured channel, so jobs may exceed Discord's interaction lifetime.
-      const task = controller.start(url);
-      void task.then(result=>completion(`<@${interaction.user.id}> ${result}`),async()=>{
-        console.error('Manual download failed; inspect downloader output.');
-        await report('手動ダウンロードに失敗しました。ホストのログを確認してください。');
-      });
-      await interaction.editReply('処理を開始しました。/status で確認できます。完了結果は設定した通知チャンネルへ投稿します。');
-    }
-  } catch {
-    const response = {content:'処理できませんでした。URL・実行状況・ホストのログを確認してください。',allowedMentions:{parse:[]}};
-    try {
-      if (interaction.deferred || interaction.replied) await interaction.editReply(response);
-      else await interaction.reply({...response,flags:MessageFlags.Ephemeral});
-    } catch {console.error('Could not reply to interaction.');}
-  }
-});
+client.on(Events.InteractionCreate,createInteractionHandler({controller,guildId,userIds,completion,report}));
 client.on(Events.Error,()=>console.error('Discord client error; check connection.'));
 for (const signal of ['SIGINT','SIGTERM']) process.once(signal,()=>{clearInterval(timer); void client.destroy();});
 try {await client.login(token);} catch {console.error('Discord login failed.'); process.exitCode=1;}
