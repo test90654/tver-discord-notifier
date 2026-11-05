@@ -100,6 +100,25 @@ Botの自動保存を使う場合、Actions側の `DOWNLOAD_ENABLED` は未設�
 
 ## 確認と制約
 
+### 全件が `REQUEST_FAILED: 163` で失敗する場合
+
+これはSTREAKSの動画再生APIからの視聴許可拒否です。作品一覧や話数情報が取得できても、動画を再生・保存できるとは限りません。163だけでは地域制限、IP制限、API対応など、どれが原因か断定できません。
+
+2026年11月5日（日本時間）の本リポジトリの失敗実行では、GitHub標準Ubuntuランナーと、当時の最新版yt-dlp `2026.10.26` を使用していました。更新だけで解決するとは限りません。GitHub標準ランナーは日本国内の実行を保証しないため、まず日本国内のPC・回線で切り分けてください。
+
+1. 同じPCのブラウザーで対象のTVer番組が再生できることを確認します。
+2. そのPCでyt-dlpを更新し、リポジトリのフォルダーから次の診断を実行します。動画も履歴も保存しません。
+
+```sh
+node --env-file-if-exists=.env diagnose.mjs https://tver.jp/episodes/epikrjbomm
+```
+
+診断が成功したら `npm run download -- https://tver.jp/episodes/epikrjbomm` で保存を確認します。ブラウザーでは再生できるのに診断は失敗する場合、実行環境、yt-dlpのバージョン、エラー本文を確認して[yt-dlpのIssue](https://github.com/yt-dlp/yt-dlp/issues)で同じ報告があるか調べてください。163を地域制限と決めつけて回避設定を追加する処理はありません。
+
+ローカルで動作したら、Discord操作にはそのPCで `npm run bot` を使います。Actionsから実行したい場合は、その日本国内PCをGitHubの Settings → Actions → Runners でself-hosted runnerとして登録し、リポジトリのActions変数に `TVER_DOWNLOAD_RUNNER=self-hosted` を設定します。`TVER_DOWNLOAD_RUNNER` を設定するだけではrunner本体は作成されません。Node.js、yt-dlp、ffmpegをrunnerの実行ユーザーのPATHから起動できるようにしてください。
+
+同じ再生許可エラーが3件連続した場合、残りは「未試行」として止め、エラーの種類と次の確認方法をDiscord・ログ・結果JSONへ表示します。単発の配信終了などの通常エラーでは残りの番組を続行します。この改善は外部APIの許可拒否そのものを解除するものではありません。
+
 `npm test` はURL検証、ランキング検証、失敗時の継続、排他制御、権限判定、日本時間のスケジュール、既存通知をネットワークなしで検証します。Botトークンを使う接続試験と実際のTVer動画ダウンロードは、利用する日本国内のホストで確認してください。
 
 地域制限やDRMを回避する処理はありません。アクセスできない番組、配信終了、DRM、サイト変更などは失敗として扱います。
