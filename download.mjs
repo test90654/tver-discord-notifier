@@ -1,5 +1,5 @@
 import {spawn} from 'node:child_process';
-import {mkdir, open, unlink, writeFile} from 'node:fs/promises';
+import {mkdir, open, unlink, writeFile,appendFile} from 'node:fs/promises';
 import {resolve, join} from 'node:path';
 import {pathToFileURL} from 'node:url';
 import {getRanking} from './ranking.mjs';
@@ -50,17 +50,17 @@ export function runProcess(command, args, {timeout = 3600000, onLine = () => {},
   });
 }
 
-export function downloadArgs(url, directory, archive) {
+export function downloadArgs(url, directory, archive,{ignoreArchive=false}={}) {
   return ['--ignore-config', '--no-playlist', '--progress', '--newline', '--progress-delta', '2', '--color', 'never', '--encoding', 'utf-8', '--windows-filenames',
     '--progress-template','download:TV_PROGRESS|%(progress.status)s|%(progress._percent_str)s|%(progress._speed_str)s|%(progress._eta_str)s',
     '--write-info-json',
-    '--download-archive', archive, '--paths', directory,
+    ...(!ignoreArchive?['--download-archive',archive]:[]), '--paths', directory,
     '--output', '%(title).150B [%(id)s].%(ext)s',
     '--format', 'bv*+ba/b', '--merge-output-format', 'mp4',
     '--retries', '3', '--fragment-retries', '3', '--socket-timeout', '30', '--', episodeUrl(url)];
 }
 
-export async function downloadEpisodes(urls, {directory = process.env.DOWNLOAD_DIR || 'downloads', stateDirectory = process.env.DOWNLOAD_STATE_DIR || '.download-state', run = runProcess, onProgress = () => {}, plan = null, scan = savedEpisodes} = {}) {
+export async function downloadEpisodes(urls, {directory = process.env.DOWNLOAD_DIR || 'downloads', stateDirectory = process.env.DOWNLOAD_STATE_DIR || '.download-state', run = runProcess, onProgress = () => {}, plan = null, scan = savedEpisodes,ignoreArchive=false} = {}) {
   const targets = [...new Set(urls.map(episodeUrl))];
   if (!targets.length || targets.length > 300) throw new Error('Specify 1–300 episodes');
   directory = resolve(directory);
@@ -85,11 +85,12 @@ export async function downloadEpisodes(urls, {directory = process.env.DOWNLOAD_D
       let duration;
       onProgress({...event,stage:'prepare'});
       try {
-        await run(process.env.YTDLP_BIN || 'yt-dlp', downloadArgs(url, directory, join(stateDirectory, 'archive.txt')), {onLine:line=>{
+        await run(process.env.YTDLP_BIN || 'yt-dlp', downloadArgs(url, directory, join(stateDirectory, 'archive.txt'),{ignoreArchive}), {onLine:line=>{
           if(duration===undefined && /\btime=\d+:/.test(line))duration=localDuration(directory,url);
           const progress=parseProgress(line,duration);
           if(progress)onProgress({...event,...progress});
         }});
+        if(ignoreArchive)await appendFile(join(stateDirectory,'archive.txt'),`tver ${new URL(url).pathname.split('/').at(-1)}\n`);
         results.push({url, ok:true});
         consecutiveDenials = 0;
         lastDenial = null;
@@ -128,6 +129,7 @@ export async function downloadEpisodes(urls, {directory = process.env.DOWNLOAD_D
 export async function downloadCollection(urls, {planner = planPastEpisodes, ...options} = {}) {
   options.onProgress?.({stage:'catalog'});
   const plan = await planner([...new Set(urls.map(episodeUrl))],{onProgress:options.onProgress});
+  await options.onPlan?.(plan);
   return downloadEpisodes(plan.urls,{...options,plan});
 }
 

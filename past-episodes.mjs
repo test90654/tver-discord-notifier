@@ -42,10 +42,11 @@ export function createCatalog(fetchImpl = fetch) {
         const seasonId = data.seasonID || content.seasonID;
         if (!validId(seriesId,'sr') || !validId(seasonId,'ss')) throw new Error('Missing series/season ID');
         const now = Date.now()/1000;
-        const start = Number(data.viewStatus?.startAt);
-        const end = Number(data.viewStatus?.endAt);
+        const start = Number(data.viewStatus?.startAt || content.startAt || result.episode.startAt);
+        const end = Number(data.viewStatus?.endAt || content.endAt || result.episode.endAt);
         return {id, seriesId, seasonId, number:episodeNumber(data.no),
           title:String(content.seriesTitle || data.series || seriesId).slice(0,160),
+          startAt:Number.isFinite(start) && start>0?start:null,endAt:Number.isFinite(end) && end>0?end:null,
           available:content.isAvailable !== false && !(start > now) && !(end > 0 && end <= now)};
       })());
       return cache.get(id);
@@ -58,12 +59,22 @@ export function createCatalog(fetchImpl = fetch) {
         if (!validId(id,'ep')) throw new Error('Invalid catalog episode ID');
         return id;
       });
+    },
+    async seriesSeasons(id){
+      if(!validId(id,'sr'))throw new Error('Invalid series ID');
+      const response=await json(`https://service-api.tver.jp/api/v1/callSeriesSeasons/${id}`,{headers});
+      if(!Array.isArray(response.result?.contents))throw new Error('Invalid series seasons');
+      return response.result.contents.filter(x=>x.type==='season').map(x=>{
+        const seasonId=x.content?.id;
+        if(!validId(seasonId,'ss'))throw new Error('Invalid series season ID');
+        return {id:seasonId,title:String(x.content.title || '')};
+      });
     }
   };
 }
 
 // Verify a completed local video, rather than treating archive entries or .part files as saved.
-export async function savedEpisodes(directory) {
+export async function savedEpisodes(directory,{includeIds=false}={}) {
   const saved = [];
   let files;
   try {files = await readdir(directory,{withFileTypes:true});}
@@ -77,7 +88,12 @@ export async function savedEpisodes(directory) {
       const base = file.name.slice(0,-'.info.json'.length);
       const video = files.find(x=>x.isFile() && ['mp4','mkv','webm','mov','m4v'].some(ext=>x.name===`${base}.${ext}`));
       if (!video || (await stat(join(directory,video.name))).size === 0) continue;
-      saved.push({seriesId:data.series_id,seasonId:data.season_id,number});
+      const record={seriesId:data.series_id,seasonId:data.season_id,number};
+      if(includeIds){
+        const id=validId(data.id,'ep')?data.id:String(data.webpage_url || data.original_url || '').match(/tver\.jp\/episodes\/(ep[a-z0-9]+)/)?.[1];
+        if(id)record.id=id;
+      }
+      saved.push(record);
     } catch { /* An unreadable sidecar does not prove an episode is saved. */ }
   }
   return saved;
@@ -143,7 +159,9 @@ export function missingWarnings(plan, saved, results) {
       const available = new Set(group.episodes.filter(x=>x.available).map(x=>x.number));
       const unavailable = missing.filter(n=>!available.has(n));
       const label = missing.slice(0,50).map(n=>`第${n}話`).join('・') + (missing.length>50?` ほか${missing.length-50}話`:'');
-      warnings.push(`不足：${group.title}［${group.seasonId}］第1〜${group.through}話のうち ${label} の保存を確認できません。${unavailable.length?'配信一覧にない／配信終了／一覧取得失敗の話を含みます。':''}`);
+      warnings.push(`不足：${group.title}［${group.seasonId}］第1〜${group.through}話のうち ${label} の保存を確認できません。${unavailable.length?'配信一覧で確認できない話を含みます。配信終了とは限りません。':''}`);
+      const failedNumbers=group.episodes.filter(x=>missing.includes(x.number) && x.available && results.some(result=>!result.ok && !result.skipped && result.url===`https://tver.jp/episodes/${x.id}`)).map(x=>x.number);
+      if(failedNumbers.length)warnings.push(`配信中・取得失敗：${group.title} ${[...new Set(failedNumbers)].map(n=>`第${n}話`).join('・')}。配信終了ではなく保存処理の失敗です。`);
     }
   }
   const failed = results.filter(x=>!x.ok && !x.skipped);
