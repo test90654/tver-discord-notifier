@@ -1,7 +1,10 @@
 import {Client, Events, GatewayIntentBits, REST, Routes, SlashCommandBuilder} from 'discord.js';
 import {DownloadController} from './bot-control.mjs';
-import {createInteractionHandler} from './bot-actions.mjs';
+import {createInteractionHandler,statusPanel} from './bot-actions.mjs';
 import {warningMessages} from './past-episodes.mjs';
+import {LivePanel} from './live-panel.mjs';
+import {readFile,writeFile} from 'node:fs/promises';
+import {join} from 'node:path';
 
 const token = process.env.DISCORD_BOT_TOKEN;
 const guildId = process.env.DISCORD_GUILD_ID;
@@ -23,12 +26,15 @@ const commands = [
 const client = new Client({intents:[GatewayIntentBits.Guilds], allowedMentions:{parse:[]}});
 let channel;
 let timer;
+let panelTimer;
+let livePanel;
 async function report(content) {
   try {await channel.send({content,allowedMentions:{parse:[]}});}
   catch {console.error('Could not send download result to Discord.');}
 }
 async function completion(content) {
   const warnings = [...controller.warnings];
+  await livePanel?.refresh();
   await report(content);
   for (const message of warningMessages(warnings)) await report(message);
 }
@@ -45,12 +51,28 @@ client.once(Events.ClientReady, async ready => {
     const rest = new REST({version:'10'}).setToken(token);
     // This application should be dedicated to this bot: replaces its guild commands.
     await rest.put(Routes.applicationGuildCommands(ready.user.id,guildId), {body:commands});
+    const panelFile=join(controller.stateDirectory,'control-message.json');
+    let messageId;
+    try{messageId=JSON.parse(await readFile(panelFile,'utf8')).id;}catch{}
+    // Reuse the menu created during local setup, when available.
+    if(!messageId){try{messageId=JSON.parse(await readFile('.control-message.json','utf8')).id;}catch{}}
+    livePanel=new LivePanel({render:()=>statusPanel(controller),update:async payload=>{
+      if(messageId){
+        try{const message=await channel.messages.fetch(messageId);await message.edit(payload);return;}
+        catch(error){if(error.code!==10008)throw error;messageId=null;}
+      }
+      const message=await channel.send(payload);
+      messageId=message.id;
+      await writeFile(panelFile,JSON.stringify({id:messageId},null,2));
+    }});
+    await livePanel.refresh();
+    panelTimer=setInterval(()=>void livePanel.refresh(),10000);
     console.log('TVer bot ready.');
     timer = setInterval(()=>void tick(),30000);
     await tick();
   } catch {console.error('Bot setup failed: check token, guild/channel IDs and bot permissions.'); await client.destroy(); process.exitCode=1;}
 });
-client.on(Events.InteractionCreate,createInteractionHandler({controller,guildId,userIds,completion,report}));
+client.on(Events.InteractionCreate,createInteractionHandler({controller,guildId,userIds,completion,report,onStateChange:()=>livePanel?.refresh()}));
 client.on(Events.Error,()=>console.error('Discord client error; check connection.'));
-for (const signal of ['SIGINT','SIGTERM']) process.once(signal,()=>{clearInterval(timer); void client.destroy();});
+for (const signal of ['SIGINT','SIGTERM']) process.once(signal,()=>{clearInterval(timer);clearInterval(panelTimer); void client.destroy();});
 try {await client.login(token);} catch {console.error('Discord login failed.'); process.exitCode=1;}

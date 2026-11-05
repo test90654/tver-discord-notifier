@@ -26,7 +26,7 @@ test('/status presents actions without starting downloads',async()=>{
   const event=interaction();await handler(event);
   assert.equal(starts.length,0);
   const payload=event.calls[0].body;
-  assert.equal(payload.flags,64);
+  assert.equal(payload.flags,undefined);
   assert.deepEqual(payload.components.flatMap(x=>x.components.map(b=>b.custom_id)),['tver:download-now','tver:refresh','tver:auto:on','tver:auto:off']);
   assert.equal(payload.components[1].components[0].disabled,true);
   controller.active=true;

@@ -16,7 +16,7 @@ export function statusPanel(controller, notice = '') {
   };
 }
 
-export function createInteractionHandler({controller,guildId,userIds,completion,report}) {
+export function createInteractionHandler({controller,guildId,userIds,completion,report,onStateChange=async()=>{}}) {
   return async interaction => {
     const button = interaction.isButton();
     if (!interaction.isChatInputCommand() && !(button && interaction.customId.startsWith('tver:'))) return;
@@ -33,6 +33,7 @@ export function createInteractionHandler({controller,guildId,userIds,completion,
           return;
         }
         const task = controller.start(url);
+        void onStateChange();
         void task.then(result=>completion(`<@${interaction.user.id}> ${result}`),async()=>{
           console.error('Manual download failed; inspect downloader output.');
           await report('手動ダウンロードに失敗しました。ホストのログを確認してください。');
@@ -46,13 +47,16 @@ export function createInteractionHandler({controller,guildId,userIds,completion,
         else if (['tver:auto:on','tver:auto:off'].includes(interaction.customId)) {
           const enabled = interaction.customId === 'tver:auto:on';
           await controller.setAutomatic(enabled);
+          await onStateChange();
           await respond(`毎日の自動保存を${enabled?'ON':'OFF'}にしました。`);
         } else await respond('この操作は利用できません。');
       } else if (interaction.commandName === 'status') {
-        await interaction.reply({...statusPanel(controller),flags:ephemeral});
+        await onStateChange();
+        await interaction.reply(statusPanel(controller));
       } else if (interaction.commandName === 'auto') {
         await interaction.deferReply({flags:ephemeral});
         await controller.setAutomatic(interaction.options.getBoolean('enabled',true));
+        await onStateChange();
         await respond();
       } else if (interaction.commandName === 'download') {
         const url = interaction.options.getSubcommand() === 'url' ? episodeUrl(interaction.options.getString('url',true)) : null;
