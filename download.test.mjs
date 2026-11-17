@@ -49,25 +49,35 @@ test('ranking validates and sorts exactly ten unique episode IDs',async()=>{
   await assert.rejects(getRanking(mock),/Invalid ranking/);
 });
 
-test('bot authorizes by guild AND user; schedules once per JST date and persists OFF',async()=>{
+test('bot authorizes by guild AND user; daily list is due once per JST date and persists OFF',async()=>{
   assert.equal(authorized({guildId:'1',user:{id:'2'}},'1',new Set(['2'])),true);
   assert.equal(authorized({guildId:'3',user:{id:'2'}},'1',new Set(['2'])),false);
   assert.equal(authorized({guildId:'1',user:{id:'3'}},'1',new Set(['2'])),false);
   const dir=await mkdtemp(join(tmpdir(),'tver-bot-'));
   let calls=0;
   try {
-    const options={stateDirectory:dir,automatic:true,ranking:async()=>['https://tver.jp/episodes/epone'],download:async()=>{calls++;return [{ok:true}];}};
+    const options={stateDirectory:dir,automatic:true,download:async()=>{calls++;return [{ok:true}];},downloadExact:async()=>{calls++;return [{ok:true}];}};
     const control=new DownloadController(options);await control.init();
     assert.equal(await control.tick(new Date('2026-11-04T12:09:00Z')),null);
-    assert.match(await control.tick(new Date('2026-11-04T12:10:00Z')),/完了/);
+    assert.equal(await control.tick(new Date('2026-11-04T12:10:00Z')),'2026-11-04');
     assert.equal(await control.tick(new Date('2026-11-04T12:11:00Z')),null);
     const restarted=new DownloadController(options);await restarted.init();
     assert.equal(await restarted.tick(new Date('2026-11-04T12:12:00Z')),null);
     await restarted.setAutomatic(false);
     const disabled=new DownloadController(options);await disabled.init();
     assert.equal(await disabled.tick(new Date('2026-11-05T12:10:00Z')),null);
-    assert.equal(calls,1);
+    assert.equal(calls,0,'the schedule only posts a list; it never downloads');
   } finally {await rm(dir,{recursive:true,force:true});}
+});
+
+test('checked episodes are downloaded exactly, without adding past episodes',async()=>{
+  const seen=[];
+  const control=new DownloadController({download:async()=>{throw new Error('must not expand season');},downloadExact:async urls=>{seen.push(...urls);return urls.map(url=>({url,ok:true}));}});
+  assert.match(await control.start(null,{selected:['https://tver.jp/episodes/epzf0th88w','https://tver.jp/episodes/epzf0th88w?utm_medium=share']}),/1\/1/);
+  assert.deepEqual(seen,['https://tver.jp/episodes/epzf0th88w']);
+  await assert.rejects(control.start(null,{selected:[]}),/選択/);
+  await assert.rejects(control.start(null,{selected:['https://evil.com/episodes/epx']}));
+  assert.equal(control.active,false);
 });
 
 test('bot rejects concurrent job and releases busy state after failure',async()=>{
