@@ -2,6 +2,7 @@ import {Client, Events, GatewayIntentBits, MessageFlags, REST, Routes, SlashComm
 import {DownloadController, authorized} from './bot-control.mjs';
 import {episodeUrl} from './download.mjs';
 import {warningMessages} from './past-episodes.mjs';
+import {PICK_PREFIX, rankingPicker, seasonPicker, selectedUrls} from './picker.mjs';
 
 const token = process.env.DISCORD_BOT_TOKEN;
 const guildId = process.env.DISCORD_GUILD_ID;
@@ -16,9 +17,12 @@ const commands = [
   new SlashCommandBuilder().setName('download').setDescription('TVerをホストに保存する')
     .addSubcommand(x=>x.setName('ranking').setDescription('最新ドラマTOP10と同じシーズンの過去話を保存'))
     .addSubcommand(x=>x.setName('url').setDescription('指定した話と同じシーズンの過去話を保存').addStringOption(o=>o.setName('url').setDescription('https://tver.jp/episodes/ep...').setRequired(true))),
+  new SlashCommandBuilder().setName('list').setDescription('タイトル一覧を表示し、チェックした回だけ保存する')
+    .addSubcommand(x=>x.setName('ranking').setDescription('最新ドラマTOP10を一覧表示'))
+    .addSubcommand(x=>x.setName('url').setDescription('指定した話と同じシーズンの全話を一覧表示').addStringOption(o=>o.setName('url').setDescription('https://tver.jp/episodes/ep...').setRequired(true))),
   new SlashCommandBuilder().setName('status').setDescription('ダウンロードの進行と自動保存設定を確認'),
-  new SlashCommandBuilder().setName('auto').setDescription('このBotの毎日21:10の自動保存を切り替える')
-    .addBooleanOption(x=>x.setName('enabled').setDescription('ONなら自動保存').setRequired(true))
+  new SlashCommandBuilder().setName('auto').setDescription('毎日21:10にランキングの選択リストを投稿するか切り替える')
+    .addBooleanOption(x=>x.setName('enabled').setDescription('ONなら毎日投稿（自動では保存しません）').setRequired(true))
 ].map(x=>x.toJSON());
 const client = new Client({intents:[GatewayIntentBits.Guilds], allowedMentions:{parse:[]}});
 let channel;
@@ -34,9 +38,17 @@ async function completion(content) {
 }
 async function tick() {
   try {
-    const result = await controller.tick();
-    if (result) await completion(`自動ダウンロード：${result}`);
-  } catch {console.error('Automatic download failed; inspect downloader output.'); await report('自動ダウンロードに失敗しました。ホストのログを確認してください。');}
+    if (!await controller.tick()) return;
+    const picker = await rankingPicker();
+    await channel.send({...picker,allowedMentions:{parse:[]}});
+  } catch {console.error('Daily selection list failed.'); await report('本日のランキング選択リストを投稿できませんでした。/list ranking で再表示できます。');}
+}
+function startSelected(interaction, urls) {
+  const task = controller.start(null,{selected:urls});
+  void task.then(result=>completion(`<@${interaction.user.id}> ${result}`),async()=>{
+    console.error('Selected download failed; inspect downloader output.');
+    await report('選択した回のダウンロードに失敗しました。ホストのログを確認してください。');
+  });
 }
 client.once(Events.ClientReady, async ready => {
   try {
@@ -51,13 +63,30 @@ client.once(Events.ClientReady, async ready => {
   } catch {console.error('Bot setup failed: check token, guild/channel IDs and bot permissions.'); await client.destroy(); process.exitCode=1;}
 });
 client.on(Events.InteractionCreate, async interaction => {
-  if (!interaction.isChatInputCommand()) return;
+  const picking = interaction.isStringSelectMenu() && interaction.customId.startsWith(PICK_PREFIX);
+  if (!interaction.isChatInputCommand() && !picking) return;
   try {
     if (!authorized(interaction,guildId,userIds)) {
       await interaction.reply({content:'このBotを操作する権限がありません。',flags:MessageFlags.Ephemeral});
       return;
     }
-    if (interaction.commandName === 'status') {
+    if (picking) {
+      if (controller.active) {
+        await interaction.reply({content:'別の保存を実行中です。完了後にもう一度チェックしてください。/status で確認できます。',flags:MessageFlags.Ephemeral});
+        return;
+      }
+      const urls = selectedUrls(interaction.values);
+      const labels = interaction.component.options.filter(x=>interaction.values.includes(x.value)).map(x=>`・${x.label}${x.description?` ${x.description}`:''}`);
+      startSelected(interaction,urls);
+      await interaction.reply({content:`選択した${urls.length}件の保存を開始しました（他の回は保存しません）。\n${labels.join('\n')}`.slice(0,1900),flags:MessageFlags.Ephemeral,allowedMentions:{parse:[]}});
+    } else if (interaction.commandName === 'list') {
+      await interaction.deferReply();
+      const picker = interaction.options.getSubcommand() === 'url'
+        ? await seasonPicker(interaction.options.getString('url',true))
+        : await rankingPicker();
+      if (!picker.components.length) {await interaction.editReply('表示できる回がありません。'); return;}
+      await interaction.editReply({...picker,allowedMentions:{parse:[]}});
+    } else if (interaction.commandName === 'status') {
       await interaction.reply({content:controller.status(),flags:MessageFlags.Ephemeral});
     } else if (interaction.commandName === 'auto') {
       await interaction.deferReply({flags:MessageFlags.Ephemeral});
