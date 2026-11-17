@@ -1,4 +1,4 @@
-export async function getRanking(fetchImpl = fetch) {
+export async function getRankingEntries(fetchImpl = fetch) {
   const headers = {Origin: 'https://tver.jp', Referer: 'https://tver.jp/', 'x-tver-platform-type': 'web'};
   async function json(url, options = {}) {
     const response = await fetchImpl(url, {...options, signal: AbortSignal.timeout(30000)});
@@ -18,5 +18,9 @@ export async function getRanking(fetchImpl = fetch) {
   if (top.length !== 10 || top.some((x,i) => x.rank !== i+1 || !/^ep[a-z0-9]+$/.test(x.content?.id)) || new Set(top.map(x => x.content.id)).size !== 10) {
     throw new Error('Invalid ranking top 10');
   }
-  return top.map(x => `https://tver.jp/episodes/${x.content.id}`);
+  return top.map(x => ({id:x.content.id, rank:x.rank, seriesTitle:String(x.content.seriesTitle || ''), title:String(x.content.title || '')}));
+}
+
+export async function getRanking(fetchImpl = fetch) {
+  return (await getRankingEntries(fetchImpl)).map(x => `https://tver.jp/episodes/${x.id}`);
 }

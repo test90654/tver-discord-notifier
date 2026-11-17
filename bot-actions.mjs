@@ -6,7 +6,7 @@ import {UploadPicker} from './upload-picker.mjs';
 const ephemeral = 64;
 export function statusPanel(controller, notice = '') {
   return {
-    content:[notice,controller.status(),'下のボタンで今すぐ保存・自動保存の切り替えができます。'].filter(Boolean).join('\n'),
+    content:[notice,controller.status(),'下のボタンで今すぐ保存・一覧から選んで保存・自動保存の切り替えができます。'].filter(Boolean).join('\n'),
     allowedMentions:{parse:[]},
     components:[{type:1,components:[
       {type:2,custom_id:'tver:download-now',label:controller.active?'保存処理中':'今すぐランキングと過去話を保存',style:1,disabled:controller.active},
@@ -14,7 +14,10 @@ export function statusPanel(controller, notice = '') {
     ]},{type:1,components:[
       {type:2,custom_id:'tver:auto:on',label:'毎日の自動保存をON',style:3,disabled:controller.schedule.enabled},
       {type:2,custom_id:'tver:auto:off',label:'毎日の自動保存をOFF',style:2,disabled:!controller.schedule.enabled}
-    ]},{type:1,components:[{type:2,custom_id:'tver:uploads:open',label:'YouTube保存済みにする',style:2}]}]
+    ]},{type:1,components:[
+      {type:2,custom_id:'pick:open:ranking',label:'TOP10の一覧から選んで保存',style:1,disabled:controller.active},
+      {type:2,custom_id:'tver:uploads:open',label:'YouTube保存済みにする',style:2}
+    ]}]
   };
 }
 

@@ -1,11 +1,12 @@
-import {Client, Events, GatewayIntentBits, REST, Routes, SlashCommandBuilder} from 'discord.js';
-import {DownloadController} from './bot-control.mjs';
+import {Client, Events, GatewayIntentBits, MessageFlags, REST, Routes, SlashCommandBuilder} from 'discord.js';
+import {DownloadController, authorized} from './bot-control.mjs';
 import {createInteractionHandler,statusPanel} from './bot-actions.mjs';
 import {warningMessages} from './past-episodes.mjs';
 import {LivePanel} from './live-panel.mjs';
 import {readFile,writeFile} from 'node:fs/promises';
 import {join} from 'node:path';
 import {DeadlineWatcher} from './deadline-watch.mjs';
+import {PICK_PREFIX, rankingPicker, seasonPicker, selectedUrls} from './picker.mjs';
 
 const token = process.env.DISCORD_BOT_TOKEN;
 const guildId = process.env.DISCORD_GUILD_ID;
@@ -20,6 +21,9 @@ const commands = [
   new SlashCommandBuilder().setName('download').setDescription('TVerをホストに保存する')
     .addSubcommand(x=>x.setName('ranking').setDescription('最新ドラマTOP10と同じシーズンの過去話を保存'))
     .addSubcommand(x=>x.setName('url').setDescription('指定した話と同じシーズンの過去話を保存').addStringOption(o=>o.setName('url').setDescription('https://tver.jp/episodes/ep...').setRequired(true))),
+  new SlashCommandBuilder().setName('list').setDescription('タイトル一覧を表示し、チェックした回だけ保存する')
+    .addSubcommand(x=>x.setName('ranking').setDescription('最新ドラマTOP10を一覧表示'))
+    .addSubcommand(x=>x.setName('url').setDescription('指定した話と同じシーズンの全話を一覧表示').addStringOption(o=>o.setName('url').setDescription('https://tver.jp/episodes/ep...').setRequired(true))),
   new SlashCommandBuilder().setName('status').setDescription('ダウンロードの進行と自動保存設定を確認'),
   new SlashCommandBuilder().setName('uploaded').setDescription('作品と話数を一覧から選んでYouTube保存済みに登録')
     .addStringOption(x=>x.setName('episode').setDescription('任意：元のTVer URL。省略すると一覧から選択'))
@@ -85,7 +89,47 @@ client.once(Events.ClientReady, async ready => {
     void watcher.tick();
   } catch {console.error('Bot setup failed: check token, guild/channel IDs and bot permissions.'); await client.destroy(); process.exitCode=1;}
 });
-client.on(Events.InteractionCreate,createInteractionHandler({controller,guildId,userIds,completion,report,onStateChange:()=>livePanel?.refresh()}));
+const baseHandler=createInteractionHandler({controller,guildId,userIds,completion,report,onStateChange:()=>livePanel?.refresh()});
+// /list and the checklist menus: save exactly the checked episodes.
+async function pickHandler(interaction){
+  const component=(interaction.isStringSelectMenu() || interaction.isButton()) && interaction.customId.startsWith(PICK_PREFIX);
+  if(!component && !(interaction.isChatInputCommand() && interaction.commandName==='list'))return false;
+  try{
+    if(!authorized(interaction,guildId,userIds)){
+      await interaction.reply({content:'このBotを操作する権限がありません。',flags:MessageFlags.Ephemeral});
+      return true;
+    }
+    if(interaction.isButton()){
+      await interaction.deferReply({flags:MessageFlags.Ephemeral});
+      await interaction.editReply({...await rankingPicker(),allowedMentions:{parse:[]}});
+    }else if(interaction.isStringSelectMenu()){
+      if(controller.active){
+        await interaction.reply({content:'別の保存を実行中です。完了後にもう一度チェックしてください。',flags:MessageFlags.Ephemeral});
+        return true;
+      }
+      const urls=selectedUrls(interaction.values);
+      const labels=interaction.component.options.filter(x=>interaction.values.includes(x.value)).map(x=>`・${x.label}${x.description?` ${x.description}`:''}`);
+      const task=controller.start(null,{selected:urls});
+      void livePanel?.refresh();
+      void task.then(result=>completion(`<@${interaction.user.id}> ${result}`),async()=>{
+        console.error('Selected download failed; inspect downloader output.');
+        await report('選択した回のダウンロードに失敗しました。ホストのログを確認してください。');
+      }).catch(()=>console.error('Could not report selected download result.'));
+      await interaction.reply({content:`選択した${urls.length}件の保存を開始しました（他の回は保存しません）。\n${labels.join('\n')}`.slice(0,1900),flags:MessageFlags.Ephemeral,allowedMentions:{parse:[]}});
+    }else{
+      await interaction.deferReply();
+      const picker=interaction.options.getSubcommand()==='url'?await seasonPicker(interaction.options.getString('url',true)):await rankingPicker();
+      if(!picker.components.length){await interaction.editReply('表示できる回がありません。');return true;}
+      await interaction.editReply({...picker,allowedMentions:{parse:[]}});
+    }
+  }catch{
+    const response={content:'一覧を表示・保存できませんでした。URL・実行状況・ホストのログを確認してください。',allowedMentions:{parse:[]}};
+    try{if(interaction.deferred || interaction.replied)await interaction.editReply(response);else await interaction.reply({...response,flags:MessageFlags.Ephemeral});}
+    catch{console.error('Could not reply to interaction.');}
+  }
+  return true;
+}
+client.on(Events.InteractionCreate,async interaction=>{if(!await pickHandler(interaction))await baseHandler(interaction);});
 client.on(Events.Error,()=>console.error('Discord client error; check connection.'));
 for (const signal of ['SIGINT','SIGTERM']) process.once(signal,()=>{clearInterval(timer);clearInterval(panelTimer);clearInterval(watchTimer); void client.destroy();});
 try {await client.login(token);} catch {console.error('Discord login failed.'); process.exitCode=1;}

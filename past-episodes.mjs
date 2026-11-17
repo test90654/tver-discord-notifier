@@ -51,14 +51,23 @@ export function createCatalog(fetchImpl = fetch) {
       })());
       return cache.get(id);
     },
-    async season(id) {
+    async seasonContents(id) {
       if (!validId(id,'ss')) throw new Error('Invalid season ID');
       const result = await service(`callSeasonEpisodes/${id}`);
       if (!Array.isArray(result?.contents)) throw new Error('Invalid season episodes');
-      return [...new Set(result.contents.filter(x=>x.type==='episode').map(x=>x.content?.id))].map(id=>{
-        if (!validId(id,'ep')) throw new Error('Invalid catalog episode ID');
-        return id;
-      });
+      const seen = new Set();
+      const rows = [];
+      for (const x of result.contents.filter(x=>x.type==='episode')) {
+        const episodeId = x.content?.id;
+        if (!validId(episodeId,'ep')) throw new Error('Invalid catalog episode ID');
+        if (seen.has(episodeId)) continue;
+        seen.add(episodeId);
+        rows.push({id:episodeId,seriesTitle:String(x.content.seriesTitle || ''),title:String(x.content.title || ''),date:String(x.content.broadcastDateLabel || '')});
+      }
+      return rows;
+    },
+    async season(id) {
+      return (await this.seasonContents(id)).map(x=>x.id);
     },
     async seriesSeasons(id){
       if(!validId(id,'sr'))throw new Error('Invalid series ID');

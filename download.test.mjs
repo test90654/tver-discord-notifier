@@ -70,6 +70,16 @@ test('bot authorizes by guild AND user; schedules once per JST date and persists
   } finally {await rm(dir,{recursive:true,force:true});}
 });
 
+test('checked episodes are downloaded exactly, without adding past episodes',async()=>{
+  const seen=[];
+  const control=new DownloadController({download:async()=>{throw new Error('must not expand season');},directDownload:async(urls,options)=>{assert.equal(options.plan,undefined);seen.push(...urls);return urls.map(url=>({url,ok:true}));}});
+  assert.match(await control.start(null,{selected:['https://tver.jp/episodes/epzf0th88w','https://tver.jp/episodes/epzf0th88w?utm_medium=share']}),/1\/1/);
+  assert.deepEqual(seen,['https://tver.jp/episodes/epzf0th88w']);
+  await assert.rejects(control.start(null,{selected:[]}),/選択/);
+  await assert.rejects(control.start(null,{selected:['https://evil.com/episodes/epx']}));
+  assert.equal(control.active,false);
+});
+
 test('bot rejects concurrent job and releases busy state after failure',async()=>{
   let rejectJob;
   const control=new DownloadController({ranking:()=>new Promise((_,reject)=>{rejectJob=reject;})});

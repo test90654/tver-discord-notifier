@@ -43,9 +43,14 @@ export class DownloadController {
   status() {
     return `${this.progress}\n毎日21:10（日本時間）の自動保存：${this.schedule.enabled?'ON':'OFF'}\n直近の自動実行日：${this.schedule.lastDate || '未実行'}${this.watcher?'\n'+this.watcher.status():''}`;
   }
-  async start(url = null, {scheduledDate,plan=null,monitor=false} = {}) {
+  // selected: exactly the episodes checked in a Discord list (/list), without adding past episodes.
+  async start(url = null, {scheduledDate,plan=null,monitor=false,selected=null} = {}) {
     if (this.active) throw new Error('実行中です。/status で確認してください。');
     if (url !== null) url = episodeUrl(url);
+    if (selected !== null) {
+      selected = [...new Set(selected.map(episodeUrl))];
+      if (!selected.length) throw new Error('保存する回を選択してください。');
+    }
     this.active = true;
     this.warnings = [];
     this.lastResults=[];
@@ -56,7 +61,7 @@ export class DownloadController {
         await this.saveSchedule();
       }
       const options={stateDirectory:this.stateDirectory,onProgress:event=>{this.progress=formatProgress(event);},onPlan:value=>this.watcher?.track(value)};
-      const results=plan?await this.directDownload(plan.urls,{...options,plan,ignoreArchive:monitor}):await this.download(url?[url]:await this.ranking(),options);
+      const results=selected?await this.directDownload(selected,options):plan?await this.directDownload(plan.urls,{...options,plan,ignoreArchive:monitor}):await this.download(url?[url]:await this.ranking(),options);
       this.lastResults=results;
       const ok = results.filter(x=>x.ok).length;
       const skipped = results.filter(x=>x.skipped).length;
