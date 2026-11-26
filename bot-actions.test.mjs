@@ -27,7 +27,7 @@ test('/status presents actions without starting downloads',async()=>{
   assert.equal(starts.length,0);
   const payload=event.calls[0].body;
   assert.equal(payload.flags,undefined);
-  assert.deepEqual(payload.components.flatMap(x=>x.components.map(b=>b.custom_id)),['tver:download-now','tver:refresh','tver:auto:on','tver:auto:off','pick:open:ranking','pick:open:old','tver:uploads:open']);
+  assert.deepEqual(payload.components.flatMap(x=>x.components.map(b=>b.custom_id)),['tver:download-now','tver:refresh','tver:cancel','tver:auto:on','tver:auto:off','pick:open:ranking','pick:open:old','tver:uploads:open']);
   assert.equal(payload.components[1].components[0].disabled,true);
   controller.active=true;
   assert.equal(statusPanel(controller).components[0].components[0].disabled,true);
@@ -71,4 +71,20 @@ test('rechecks busy state after acknowledgement to avoid a timer/click race',asy
   await handler(event);
   assert.equal(starts.length,0);
   assert.match(event.calls.at(-1).body.content,/実行中/);
+});
+
+test('cancel button stops only a running job and is disabled while idle',async()=>{
+  const {controller,handler}=setup();
+  let cancels=0;
+  controller.cancel=()=>{cancels++;return controller.active;};
+  assert.equal(statusPanel(controller).components[0].components[2].disabled,true);
+  const idle=interaction({button:true,id:'tver:cancel'});await handler(idle);
+  assert.match(idle.calls.at(-1).body.content,/中止できる保存処理はありません/);
+  controller.active=true;
+  assert.equal(statusPanel(controller).components[0].components[2].disabled,false);
+  const busy=interaction({button:true,id:'tver:cancel'});await handler(busy);
+  assert.match(busy.calls.at(-1).body.content,/中止しています/);
+  assert.equal(cancels,2);
+  const stranger=interaction({button:true,id:'tver:cancel',userId:'9'});await handler(stranger);
+  assert.equal(cancels,2);
 });

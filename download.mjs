@@ -16,9 +16,23 @@ export function episodeUrl(value) {
   return `https://tver.jp${url.pathname.replace(/\/$/, '')}`;
 }
 
-export function runProcess(command, args, {timeout = 3600000, onLine = () => {}, ...options} = {}) {
+export const CANCELLED = 'DOWNLOAD_CANCELLED';
+const cancelledError = () => Object.assign(new Error('Download cancelled'), {code:CANCELLED});
+// Stop yt-dlp together with the ffmpeg processes it started.
+export function killTree(child, platform = process.platform, spawnImpl = spawn) {
+  if (platform === 'win32' && child.pid) {
+    try {spawnImpl('taskkill', ['/pid', String(child.pid), '/T', '/F'], {stdio:'ignore', shell:false}).once?.('error', () => child.kill());}
+    catch {child.kill();}
+  } else child.kill('SIGTERM');
+}
+
+export function runProcess(command, args, {timeout = 3600000, onLine = () => {}, signal, kill = killTree, ...options} = {}) {
   return new Promise((resolvePromise, reject) => {
+    if (signal?.aborted) {reject(cancelledError()); return;}
     const child = spawn(command, args, {stdio:['ignore','pipe','pipe'], shell:false, ...options});
+    let cancelled = false;
+    const onAbort = () => {cancelled = true; kill(child);};
+    signal?.addEventListener('abort', onAbort, {once:true});
     const buffers={stdout:'',stderr:''};
     function lines(name,chunk){
       buffers[name]+=chunk;
@@ -36,11 +50,13 @@ export function runProcess(command, args, {timeout = 3600000, onLine = () => {},
       lines('stderr',chunk);
     });
     let expired = false;
-    const timer = setTimeout(() => {expired = true; child.kill('SIGTERM');}, timeout);
-    child.once('error', error => {clearTimeout(timer); reject(error);});
+    const timer = setTimeout(() => {expired = true; kill(child);}, timeout);
+    child.once('error', error => {clearTimeout(timer); signal?.removeEventListener('abort', onAbort); reject(error);});
     child.once('close', code => {
       for(const line of Object.values(buffers))if(line)onLine(line);
       clearTimeout(timer);
+      signal?.removeEventListener('abort', onAbort);
+      if (cancelled) {reject(cancelledError()); return;}
       if (expired || code !== 0) {
         const error = new Error(expired ? 'Download timed out' : `Downloader exited with ${code}`);
         error.stderrTail = stderrTail;
@@ -61,7 +77,7 @@ export function downloadArgs(url, directory, archive,{ignoreArchive=false}={}) {
     '--retries', '3', '--fragment-retries', '3', '--socket-timeout', '30', '--', episodeUrl(url)];
 }
 
-export async function downloadEpisodes(urls, {directory = process.env.DOWNLOAD_DIR || 'downloads', stateDirectory = process.env.DOWNLOAD_STATE_DIR || '.download-state', run = runProcess, onProgress = () => {}, plan = null, scan = savedEpisodes,ignoreArchive=false} = {}) {
+export async function downloadEpisodes(urls, {directory = process.env.DOWNLOAD_DIR || 'downloads', stateDirectory = process.env.DOWNLOAD_STATE_DIR || '.download-state', run = runProcess, onProgress = () => {}, plan = null, scan = savedEpisodes,ignoreArchive=false, signal} = {}) {
   const targets = [...new Set(urls.map(episodeUrl))];
   if (!targets.length || targets.length > 300) throw new Error('Specify 1–300 episodes');
   directory = resolve(directory);
@@ -79,8 +95,15 @@ export async function downloadEpisodes(urls, {directory = process.env.DOWNLOAD_D
   const diagnostics = new Set();
   let consecutiveDenials = 0;
   let lastDenial;
+  const cancelRest = from => {
+    const rest = targets.slice(from);
+    for (const pending of rest) results.push({url:pending,ok:false,skipped:true,reason:'cancelled'});
+    diagnostics.add(`保存を中止しました。未保存の${rest.length}件は、次に選び直すと保存できます。`);
+    results.cancelled = true;
+  };
   try {
     for (const [index, url] of targets.entries()) {
+      if (signal?.aborted) {cancelRest(index); break;}
       const episode=plan?.groups.flatMap(group=>group.episodes).find(x=>`https://tver.jp/episodes/${x.id}`===url);
       const external=await readExternalCopies(stateDirectory);
       if(matchesExternalCopy(external,{id:sourceEpisodeId(url),...episode})){
@@ -91,7 +114,7 @@ export async function downloadEpisodes(urls, {directory = process.env.DOWNLOAD_D
       let duration;
       onProgress({...event,stage:'prepare'});
       try {
-        await run(process.env.YTDLP_BIN || 'yt-dlp', downloadArgs(url, directory, join(stateDirectory, 'archive.txt'),{ignoreArchive}), {onLine:line=>{
+        await run(process.env.YTDLP_BIN || 'yt-dlp', downloadArgs(url, directory, join(stateDirectory, 'archive.txt'),{ignoreArchive}), {signal, onLine:line=>{
           if(duration===undefined && /\btime=\d+:/.test(line))duration=localDuration(directory,url);
           const progress=parseProgress(line,duration);
           if(progress)onProgress({...event,...progress});
@@ -101,6 +124,7 @@ export async function downloadEpisodes(urls, {directory = process.env.DOWNLOAD_D
         consecutiveDenials = 0;
         lastDenial = null;
       } catch (error) {
+        if (error.code === CANCELLED || signal?.aborted) {cancelRest(index); break;}
         const reason = classifyDownloadError(error);
         results.push({url, ok:false, reason});
         if (reason !== 'downloader_failed') diagnostics.add(downloadErrorMessage(reason));
@@ -116,7 +140,7 @@ export async function downloadEpisodes(urls, {directory = process.env.DOWNLOAD_D
       }
       onProgress({...event,stage:'episodeDone',completed:results.filter(x=>!x.skipped).length,ok:results.filter(x=>x.ok).length,failed:results.filter(x=>!x.ok && !x.skipped).length});
     }
-    if (plan) {
+    if (plan && !results.cancelled) {
       onProgress({stage:'verify'});
       let saved = [];
       try {saved = [...await scan(directory),...await readExternalCopies(stateDirectory)];}
@@ -135,6 +159,7 @@ export async function downloadEpisodes(urls, {directory = process.env.DOWNLOAD_D
 export async function downloadCollection(urls, {planner = planPastEpisodes, ...options} = {}) {
   options.onProgress?.({stage:'catalog'});
   const plan = await planner([...new Set(urls.map(episodeUrl))],{onProgress:options.onProgress});
+  if (options.signal?.aborted) throw cancelledError();
   await options.onPlan?.(plan);
   return downloadEpisodes(plan.urls,{...options,plan});
 }

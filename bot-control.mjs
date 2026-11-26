@@ -1,7 +1,7 @@
 import {mkdir, readFile, writeFile, rename} from 'node:fs/promises';
 import {join} from 'node:path';
 import {getRanking} from './ranking.mjs';
-import {downloadCollection,downloadEpisodes, episodeUrl} from './download.mjs';
+import {CANCELLED, downloadCollection,downloadEpisodes, episodeUrl} from './download.mjs';
 import {formatProgress} from './progress.mjs';
 
 export function authorized(interaction, guildId, userIds) {
@@ -52,6 +52,7 @@ export class DownloadController {
       if (!selected.length) throw new Error('保存する回を選択してください。');
     }
     this.active = true;
+    this.aborter = new AbortController();
     this.warnings = [];
     this.lastResults=[];
     this.progress = 'ランキング取得／ダウンロード準備中';
@@ -60,19 +61,33 @@ export class DownloadController {
         this.schedule.lastDate = scheduledDate;
         await this.saveSchedule();
       }
-      const options={stateDirectory:this.stateDirectory,onProgress:event=>{this.progress=formatProgress(event);},onPlan:value=>this.watcher?.track(value)};
+      const signal=this.aborter.signal;
+      const options={stateDirectory:this.stateDirectory,signal,onProgress:event=>{if(!signal.aborted)this.progress=formatProgress(event);},onPlan:value=>this.watcher?.track(value)};
       const results=selected?await this.directDownload(selected,options):plan?await this.directDownload(plan.urls,{...options,plan,ignoreArchive:monitor}):await this.download(url?[url]:await this.ranking(),options);
       this.lastResults=results;
       const ok = results.filter(x=>x.ok).length;
       const skipped = results.filter(x=>x.skipped).length;
       this.warnings = results.warnings || [];
-      this.progress = `完了：保存成功または保存済み ${ok}/${results.length}件、失敗 ${results.length-ok-skipped}件、未試行 ${skipped}件`;
+      this.progress = results.cancelled
+        ? `中止しました：保存成功または保存済み ${ok}件、失敗 ${results.length-ok-skipped}件、未保存 ${skipped}件`
+        : `完了：保存成功または保存済み ${ok}/${results.length}件、失敗 ${results.length-ok-skipped}件、未試行 ${skipped}件`;
       if (this.warnings.length) this.progress += `\n⚠ 不足・確認不能などの警告 ${this.warnings.length}件（詳細は通知チャンネル）`;
       return this.progress;
     } catch(error) {
+      if (error.code === CANCELLED || this.aborter.signal.aborted) {
+        this.progress = '中止しました（ダウンロード開始前）。';
+        return this.progress;
+      }
       this.progress = '失敗しました。ホストのログを確認して再実行してください。';
       throw error;
-    } finally {this.active = false;}
+    } finally {this.active = false; this.aborter = null;}
+  }
+  // Stop the running job: kills the current yt-dlp and skips the remaining episodes.
+  cancel() {
+    if (!this.active || !this.aborter || this.aborter.signal.aborted) return false;
+    this.aborter.abort();
+    this.progress = '中止しています…（実行中のyt-dlpを停止しています）';
+    return true;
   }
   async tick(now = new Date()) {
     const parts = Object.fromEntries(new Intl.DateTimeFormat('en-CA',{timeZone:'Asia/Tokyo',year:'numeric',month:'2-digit',day:'2-digit',hour:'2-digit',minute:'2-digit',hourCycle:'h23'}).formatToParts(now).map(x=>[x.type,x.value]));
