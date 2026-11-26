@@ -69,6 +69,12 @@ export function createCatalog(fetchImpl = fetch) {
     async season(id) {
       return (await this.seasonContents(id)).map(x=>x.id);
     },
+    // Newly published drama episodes (TVer "新着"), used to find newly started archive dramas.
+    async newer(category='drama'){
+      const result=await service(`callNewerDetail/${category}`);
+      if(result?.contents?.content?.id!==category || !Array.isArray(result.contents.contents))throw new Error('Invalid newer list');
+      return result.contents.contents;
+    },
     async seriesSeasons(id){
       if(!validId(id,'sr'))throw new Error('Invalid series ID');
       const response=await json(`https://service-api.tver.jp/api/v1/callSeriesSeasons/${id}`,{headers});
