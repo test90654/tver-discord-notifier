@@ -16,6 +16,7 @@ export function statusPanel(controller, notice = '') {
       {type:2,custom_id:'tver:auto:off',label:'毎日の自動保存をOFF',style:2,disabled:!controller.schedule.enabled}
     ]},{type:1,components:[
       {type:2,custom_id:'pick:open:ranking',label:'TOP10の一覧から選んで保存',style:1,disabled:controller.active},
+      {type:2,custom_id:'pick:open:old',label:'新着の旧作ドラマから選んで保存',style:1,disabled:controller.active},
       {type:2,custom_id:'tver:uploads:open',label:'YouTube保存済みにする',style:2}
     ]}]
   };

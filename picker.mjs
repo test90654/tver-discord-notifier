@@ -61,3 +61,38 @@ export async function seasonPicker(url, {catalog = createCatalog()} = {}) {
   const note = picker.omitted ? `\n※ ${picker.omitted}件は表示上限のため省略しています。` : '';
   return {content: `📺 ${episode.title}\n指定した回にチェック済みです。必要な回だけチェックして、メニューの外をクリックすると保存を開始します。${note}`, components: picker.components};
 }
+
+const OLD_LABEL = /^(\d{4})年放送/;
+const shortDate = seconds => new Intl.DateTimeFormat('ja-JP', {timeZone:'Asia/Tokyo', month:'numeric', day:'numeric'}).format(new Date(seconds * 1000));
+
+// Archive dramas (labelled "YYYY年放送") whose episodes started streaming within the last `days` days.
+// Same criteria as the daily old-drama notification, without its seen-series history.
+export function oldDramaEntries(rows, {now = new Date(), days = 7} = {}) {
+  const current = now.getTime() / 1000;
+  const since = current - days * 86400;
+  const thisYear = Number(new Intl.DateTimeFormat('en', {timeZone:'Asia/Tokyo', year:'numeric'}).format(now));
+  const series = new Map();
+  for (const item of rows) {
+    const c = item?.content;
+    if (item?.type !== 'episode' || !/^ep[a-z0-9]+$/.test(c?.id) || !/^sr[a-z0-9]+$/.test(c?.seriesID)) continue;
+    const year = OLD_LABEL.exec(c.broadcastDateLabel || '');
+    if (!year || Number(year[1]) > thisYear || c.isAvailable !== true || c.ribbonID === 1 || !c.seriesTitle) continue;
+    if (!Number.isFinite(c.endAt) || c.endAt <= current || !Number.isFinite(item.startAt) || item.startAt < since || item.startAt > current) continue;
+    if (!series.has(c.seriesID)) series.set(c.seriesID, {startAt:item.startAt, episodes:new Map()});
+    const group = series.get(c.seriesID);
+    group.startAt = Math.max(group.startAt, item.startAt);
+    group.episodes.set(c.id, {id:c.id, seriesTitle:`${c.seriesTitle}（${year[1]}年）`, title:String(c.title || ''), date:`${shortDate(c.endAt)}まで`, startAt:item.startAt});
+  }
+  // Newest works first; episodes of one work stay together in streaming order.
+  return [...series.values()].sort((a,b)=>b.startAt-a.startAt)
+    .flatMap(group => [...group.episodes.values()].sort((a,b)=>a.startAt-b.startAt || a.title.localeCompare(b.title, 'ja', {numeric:true})))
+    .map(({startAt, ...entry}) => entry);
+}
+
+export async function oldDramaPicker({catalog = createCatalog(), days = 7, now = new Date()} = {}) {
+  const entries = oldDramaEntries(await catalog.newer('drama'), {now, days});
+  const picker = pickerComponents(entries);
+  const works = new Set(entries.map(x => x.seriesTitle)).size;
+  const note = picker.omitted ? `\n※ ${picker.omitted}件は表示上限のため省略しています。` : '';
+  return {content: `📼 新しく配信が始まった旧作ドラマ（直近${days}日・${works}作品${entries.length}話）\n保存したい回にチェックを入れて、メニューの外をクリックすると保存を開始します。${note}`, components: picker.components};
+}

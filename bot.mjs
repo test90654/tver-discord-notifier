@@ -6,7 +6,7 @@ import {LivePanel} from './live-panel.mjs';
 import {readFile,writeFile} from 'node:fs/promises';
 import {join} from 'node:path';
 import {DeadlineWatcher} from './deadline-watch.mjs';
-import {PICK_PREFIX, rankingPicker, seasonPicker, selectedUrls} from './picker.mjs';
+import {PICK_PREFIX, oldDramaPicker, rankingPicker, seasonPicker, selectedUrls} from './picker.mjs';
 
 const token = process.env.DISCORD_BOT_TOKEN;
 const guildId = process.env.DISCORD_GUILD_ID;
@@ -23,6 +23,7 @@ const commands = [
     .addSubcommand(x=>x.setName('url').setDescription('指定した話と同じシーズンの過去話を保存').addStringOption(o=>o.setName('url').setDescription('https://tver.jp/episodes/ep...').setRequired(true))),
   new SlashCommandBuilder().setName('list').setDescription('タイトル一覧を表示し、チェックした回だけ保存する')
     .addSubcommand(x=>x.setName('ranking').setDescription('最新ドラマTOP10を一覧表示'))
+    .addSubcommand(x=>x.setName('old').setDescription('新しく配信が始まった旧作ドラマを一覧表示').addIntegerOption(o=>o.setName('days').setDescription('何日前までの配信開始を表示するか（既定7日）').setMinValue(1).setMaxValue(30)))
     .addSubcommand(x=>x.setName('url').setDescription('指定した話と同じシーズンの全話を一覧表示').addStringOption(o=>o.setName('url').setDescription('https://tver.jp/episodes/ep...').setRequired(true))),
   new SlashCommandBuilder().setName('status').setDescription('ダウンロードの進行と自動保存設定を確認'),
   new SlashCommandBuilder().setName('uploaded').setDescription('作品と話数を一覧から選んでYouTube保存済みに登録')
@@ -101,7 +102,9 @@ async function pickHandler(interaction){
     }
     if(interaction.isButton()){
       await interaction.deferReply({flags:MessageFlags.Ephemeral});
-      await interaction.editReply({...await rankingPicker(),allowedMentions:{parse:[]}});
+      const picker=interaction.customId==='pick:open:old'?await oldDramaPicker():await rankingPicker();
+      if(!picker.components.length){await interaction.editReply(`${picker.content.split('\n')[0]}\n該当する回はありません。`);return true;}
+      await interaction.editReply({...picker,allowedMentions:{parse:[]}});
     }else if(interaction.isStringSelectMenu()){
       if(controller.active){
         await interaction.reply({content:'別の保存を実行中です。完了後にもう一度チェックしてください。',flags:MessageFlags.Ephemeral});
@@ -118,8 +121,11 @@ async function pickHandler(interaction){
       await interaction.reply({content:`選択した${urls.length}件の保存を開始しました（他の回は保存しません）。\n${labels.join('\n')}`.slice(0,1900),flags:MessageFlags.Ephemeral,allowedMentions:{parse:[]}});
     }else{
       await interaction.deferReply();
-      const picker=interaction.options.getSubcommand()==='url'?await seasonPicker(interaction.options.getString('url',true)):await rankingPicker();
-      if(!picker.components.length){await interaction.editReply('表示できる回がありません。');return true;}
+      const sub=interaction.options.getSubcommand();
+      const picker=sub==='url'?await seasonPicker(interaction.options.getString('url',true))
+        :sub==='old'?await oldDramaPicker({days:interaction.options.getInteger('days') ?? 7})
+        :await rankingPicker();
+      if(!picker.components.length){await interaction.editReply(`${picker.content.split('\n')[0]}\n該当する回はありません。`);return true;}
       await interaction.editReply({...picker,allowedMentions:{parse:[]}});
     }
   }catch{
