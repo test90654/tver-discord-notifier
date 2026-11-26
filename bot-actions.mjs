@@ -6,11 +6,12 @@ import {UploadPicker} from './upload-picker.mjs';
 const ephemeral = 64;
 export function statusPanel(controller, notice = '') {
   return {
-    content:[notice,controller.status(),'下のボタンで今すぐ保存・一覧から選んで保存・自動保存の切り替えができます。'].filter(Boolean).join('\n'),
+    content:[notice,controller.status(),'下のボタンで今すぐ保存・一覧から選んで保存・保存の中止・自動保存の切り替えができます。'].filter(Boolean).join('\n'),
     allowedMentions:{parse:[]},
     components:[{type:1,components:[
       {type:2,custom_id:'tver:download-now',label:controller.active?'保存処理中':'今すぐランキングと過去話を保存',style:1,disabled:controller.active},
-      {type:2,custom_id:'tver:refresh',label:'状態を更新',style:2}
+      {type:2,custom_id:'tver:refresh',label:'状態を更新',style:2},
+      {type:2,custom_id:'tver:cancel',label:'保存を中止',style:4,disabled:!controller.active}
     ]},{type:1,components:[
       {type:2,custom_id:'tver:auto:on',label:'毎日の自動保存をON',style:3,disabled:controller.schedule.enabled},
       {type:2,custom_id:'tver:auto:off',label:'毎日の自動保存をOFF',style:2,disabled:!controller.schedule.enabled}
@@ -52,6 +53,11 @@ export function createInteractionHandler({controller,guildId,userIds,completion,
         await interaction.deferUpdate();
         if (interaction.customId === 'tver:download-now') await begin(null);
         else if (interaction.customId === 'tver:refresh') await respond();
+        else if (interaction.customId === 'tver:cancel') {
+          const stopped = controller.cancel?.() === true;
+          await onStateChange();
+          await respond(stopped ? '保存を中止しています。止まると結果を通知チャンネルへ投稿します。' : '中止できる保存処理はありません。');
+        }
         else if (['tver:auto:on','tver:auto:off'].includes(interaction.customId)) {
           const enabled = interaction.customId === 'tver:auto:on';
           await controller.setAutomatic(enabled);
